@@ -6,4 +6,5 @@ __pycache__/
 .worktrees/
 .pytest_cache
 .playwright
+.playwright-cli/
 
