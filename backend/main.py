@@ -43,3 +43,67 @@ async def fetch_videos(request: FetchRequest) -> FetchResponse:
 @app.get("/api/fields")
 async def get_fields() -> list[str]:
     return get_available_fields()
+
+
+@app.post("/api/download", response_model=DownloadResponse)
+async def start_download(
+    request: DownloadRequest, background_tasks: BackgroundTasks
+) -> DownloadResponse:
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = {
+        "status": "running",
+        "videos": {
+            vid_id: {"status": "pending", "title": vid_id, "error": None}
+            for vid_id in request.video_ids
+        },
+    }
+    background_tasks.add_task(_run_download, job_id, request)
+    return DownloadResponse(job_id=job_id)
+
+
+@app.get("/api/progress/{job_id}", response_model=ProgressResponse)
+async def get_progress(job_id: str) -> ProgressResponse:
+    job = _jobs.get(job_id)
+    if not job:
+        return ProgressResponse(job_id=job_id, status="unknown", videos=[])
+    videos = [
+        VideoProgress(
+            video_id=vid_id,
+            title=v["title"],
+            status=v["status"],
+            error=v["error"],
+        )
+        for vid_id, v in job["videos"].items()
+    ]
+    return ProgressResponse(job_id=job_id, status=job["status"], videos=videos)
+
+
+async def _run_download(job_id: str, request: DownloadRequest) -> None:
+    loop = asyncio.get_event_loop()
+    for video_id in request.video_ids:
+        _jobs[job_id]["videos"][video_id]["status"] = "downloading"
+        try:
+            url = request.video_urls[video_id]
+            metadata, transcript = await loop.run_in_executor(
+                None, fetch_transcript_and_metadata, url, request.fields
+            )
+            title = metadata.get("title") or video_id
+            _jobs[job_id]["videos"][video_id]["title"] = title
+            folder = get_video_folder(
+                request.output_folder,
+                request.channel_name or metadata.get("channel") or "Unknown",
+                request.playlist_title,
+                metadata.get("upload_date") or "0000-00-00",
+                title,
+            )
+            write_video_files(folder, metadata, transcript)
+            _jobs[job_id]["videos"][video_id]["status"] = "done"
+        except Exception as exc:
+            _jobs[job_id]["videos"][video_id]["status"] = "error"
+            _jobs[job_id]["videos"][video_id]["error"] = str(exc)
+    _jobs[job_id]["status"] = "done"
+
+
+# Serve frontend — must come last so /api routes take priority
+from starlette.staticfiles import StaticFiles
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
