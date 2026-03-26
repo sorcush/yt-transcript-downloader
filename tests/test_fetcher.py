@@ -8,11 +8,11 @@ def test_format_date_converts_yyyymmdd():
 
 
 def test_format_date_handles_none():
-    assert _format_date(None) == "0000-00-00"
+    assert _format_date(None) is None
 
 
 def test_format_date_handles_short_string():
-    assert _format_date("bad") == "bad"
+    assert _format_date("bad") is None
 
 
 def _make_ydl_mock(info):

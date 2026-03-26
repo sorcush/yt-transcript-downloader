@@ -22,15 +22,32 @@
           <button id="fetch-btn">Fetch</button>
         </div>
 
-        <!-- Output folder -->
+        <!-- Output folder + browser cookies -->
         <div class="input-row">
           <label for="output-folder">Output folder:</label>
           <input id="output-folder" type="text"
                  placeholder="e.g. /Users/you/Downloads/transcripts">
+          <button id="browse-btn" type="button">Browse</button>
+          <label for="browser-select">Cookies from:</label>
+          <select id="browser-select">
+            <option value="">None</option>
+            <option value="chrome" selected>Chrome</option>
+            <option value="firefox">Firefox</option>
+            <option value="safari">Safari</option>
+            <option value="edge">Edge</option>
+            <option value="brave">Brave</option>
+            <option value="chromium">Chromium</option>
+          </select>
         </div>
 
-        <!-- Status / error message -->
-        <div id="status-bar" class="hidden"></div>
+        <!-- Status / date-fetch indicator (single row) -->
+        <div id="info-row" class="hidden">
+          <span id="status-bar"></span>
+          <span id="date-status" class="hidden">
+            <span id="date-status-text">Fetching dates…</span>
+            <button id="date-stop-btn">✕ Stop</button>
+          </span>
+        </div>
 
         <!-- Video table -->
         <div id="table-wrapper">
@@ -41,10 +58,10 @@
                 <th class="col-check">
                   <input type="checkbox" id="select-all" title="Select all">
                 </th>
-                <th class="col-title">Title</th>
-                <th class="col-date">Date</th>
-                <th class="col-channel">Channel</th>
-                <th class="col-duration">Duration</th>
+                <th class="col-title" data-sort-col="title" data-label="Title">Title</th>
+                <th class="col-date" data-sort-col="upload_date" data-label="Date">Date</th>
+                <th class="col-channel" data-sort-col="channel" data-label="Channel">Channel</th>
+                <th class="col-duration" data-sort-col="duration" data-label="Duration">Duration</th>
                 <th class="col-status">Status</th>
               </tr>
             </thead>

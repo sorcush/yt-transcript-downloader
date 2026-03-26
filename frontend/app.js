@@ -9,12 +9,17 @@ const state = {
   selectedFields: new Set(),
   pollTimer: null,
   currentJobId: null,
+  dateAbort: null,     // AbortController for in-flight /api/dates stream
+  sort: { col: null, dir: 'asc' },
 };
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const urlInput       = document.getElementById('url-input');
 const fetchBtn       = document.getElementById('fetch-btn');
 const outputFolder   = document.getElementById('output-folder');
+const browserSelect  = document.getElementById('browser-select');
+const browseBtn      = document.getElementById('browse-btn');
+const infoRow        = document.getElementById('info-row');
 const statusBar      = document.getElementById('status-bar');
 const emptyState     = document.getElementById('empty-state');
 const videoTable     = document.getElementById('video-table');
@@ -24,14 +29,25 @@ const bottomBar      = document.getElementById('bottom-bar');
 const selectionCount = document.getElementById('selection-count');
 const downloadBtn    = document.getElementById('download-btn');
 const fieldsList     = document.getElementById('fields-list');
+const dateStatus     = document.getElementById('date-status');
+const dateStatusText = document.getElementById('date-status-text');
+const dateStopBtn    = document.getElementById('date-stop-btn');
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
-  await loadFields();
+  // Register event listeners first so they work even if loadFields() fails
   fetchBtn.addEventListener('click', handleFetch);
   urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleFetch(); });
+  browseBtn.addEventListener('click', handleBrowse);
   selectAll.addEventListener('change', handleSelectAll);
   downloadBtn.addEventListener('click', handleDownload);
+  for (const th of videoTable.querySelectorAll('th[data-sort-col]')) {
+    th.addEventListener('click', () => handleSortClick(th.dataset.sortCol));
+  }
+  dateStopBtn.addEventListener('click', () => {
+    if (state.dateAbort) state.dateAbort.abort();
+  });
+  await loadFields();
 }
 
 // ── Fields panel ───────────────────────────────────────────────────────────
@@ -59,6 +75,46 @@ async function loadFields() {
   }
 }
 
+// ── Browse folder ──────────────────────────────────────────────────────────
+async function handleBrowse() {
+  browseBtn.disabled = true;
+  setStatus('Opening folder picker…');
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000);
+    const res = await fetch('/api/pick-folder', { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      let detail = `Server error: ${res.status}`;
+      try {
+        const body = await res.json();
+        if (body?.detail) detail = body.detail;
+      } catch {
+        // If response body is not JSON, keep fallback detail.
+      }
+      throw new Error(detail);
+    }
+
+    const { folder, cancelled } = await res.json();
+    if (folder) {
+      outputFolder.value = folder;
+      setStatus(`Output folder set to ${folder}`);
+    } else if (cancelled) {
+      setStatus('Folder selection canceled.');
+    } else {
+      setStatus('No folder selected.', true);
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      setStatus('Folder picker timed out.', true);
+      return;
+    }
+    setStatus(`Browse failed: ${err.message}`, true);
+  } finally {
+    browseBtn.disabled = false;
+  }
+}
+
 // ── Fetch videos ───────────────────────────────────────────────────────────
 async function handleFetch() {
   const url = urlInput.value.trim();
@@ -70,7 +126,7 @@ async function handleFetch() {
     const res = await fetch('/api/fetch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, cookies_browser: browserSelect.value || null }),
     });
     if (!res.ok) throw new Error(`Server error: ${res.status}`);
     const data = await res.json();
@@ -80,10 +136,48 @@ async function handleFetch() {
     state.selectedIds.clear();
     renderTable();
     setStatus(`Fetched ${data.videos.length} video(s)`);
+    fetchDatesLazy(data.videos);
   } catch (err) {
     setStatus(`Error: ${err.message}`, true);
   } finally {
     fetchBtn.disabled = false;
+  }
+}
+
+// ── Sorting ─────────────────────────────────────────────────────────────────
+function handleSortClick(col) {
+  if (state.sort.col === col) {
+    state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    state.sort.col = col;
+    state.sort.dir = 'asc';
+  }
+  renderTable();
+}
+
+function sortedVideos() {
+  const { col, dir } = state.sort;
+  if (!col) return state.videos;
+  const factor = dir === 'asc' ? 1 : -1;
+  return [...state.videos].sort((a, b) => {
+    const av = a[col], bv = b[col];
+    const aEmpty = av == null || av === '' || av === '…' || av === '—';
+    const bEmpty = bv == null || bv === '' || bv === '…' || bv === '—';
+    if (aEmpty && bEmpty) return 0;
+    if (aEmpty) return 1;
+    if (bEmpty) return -1;
+    if (col === 'duration') return factor * (av - bv);
+    return factor * String(av).localeCompare(String(bv));
+  });
+}
+
+function updateSortHeaders() {
+  for (const th of videoTable.querySelectorAll('th[data-sort-col]')) {
+    const col = th.dataset.sortCol;
+    const isActive = col === state.sort.col;
+    th.innerHTML = isActive
+      ? `${th.dataset.label} <span class="sort-icon active">${state.sort.dir === 'asc' ? '▲' : '▼'}</span>`
+      : `${th.dataset.label} <span class="sort-icon">⇅</span>`;
   }
 }
 
@@ -101,8 +195,9 @@ function renderTable() {
   emptyState.classList.add('hidden');
   videoTable.classList.remove('hidden');
   bottomBar.classList.remove('hidden');
+  updateSortHeaders();
 
-  for (const video of state.videos) {
+  for (const video of sortedVideos()) {
     const tr = document.createElement('tr');
     tr.dataset.videoId = video.video_id;
 
@@ -122,7 +217,7 @@ function renderTable() {
     titleLink.style.textDecoration = 'none';
     titleTd.appendChild(titleLink);
 
-    const dateTd    = makeTd(video.upload_date || '—', 'muted');
+    const dateTd    = makeTd(video.upload_date || '…', 'col-date muted');
     const channelTd = makeTd(video.channel || '—', 'muted');
     const durTd     = makeTd(formatDuration(video.duration), 'muted');
     const statusTd  = document.createElement('td');
@@ -186,8 +281,9 @@ function updateSelectionUI() {
 // ── Status bar ─────────────────────────────────────────────────────────────
 function setStatus(msg, isError = false) {
   statusBar.textContent = msg;
-  statusBar.classList.remove('hidden', 'error');
+  statusBar.classList.remove('error');
   if (isError) statusBar.classList.add('error');
+  infoRow.classList.remove('hidden');
 }
 
 init();
@@ -226,6 +322,7 @@ async function handleDownload() {
         output_folder: folder,
         channel_name: state.channel,
         playlist_title: state.playlistTitle,
+        cookies_browser: browserSelect.value || null,
       }),
     });
     if (!res.ok) throw new Error(`Server error: ${res.status}`);
@@ -276,6 +373,63 @@ async function pollProgress(jobId) {
     setStatus(`Polling error: ${err.message}`, true);
     downloadBtn.disabled = false;
   }
+}
+
+// ── Lazy date loading ───────────────────────────────────────────────────────
+async function fetchDatesLazy(videos) {
+  if (state.dateAbort) state.dateAbort.abort();
+
+  const needsDates = videos.filter(v => !v.upload_date);
+  if (needsDates.length === 0) return;
+
+  const total = needsDates.length;
+  let loaded = 0;
+
+  state.dateAbort = new AbortController();
+  dateStatusText.textContent = `Fetching dates… 0/${total}`;
+  dateStatus.classList.remove('hidden');
+
+  try {
+    const res = await fetch('/api/dates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videos: needsDates.map(v => ({ video_id: v.video_id, url: v.url })), cookies_browser: browserSelect.value || null }),
+      signal: state.dateAbort.signal,
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const { video_id, upload_date } = JSON.parse(line.slice(6));
+          updateDateCell(video_id, upload_date);
+          loaded++;
+          dateStatusText.textContent = `Fetching dates… ${loaded}/${total}`;
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') console.error('Date fetch error:', err);
+  } finally {
+    dateStatus.classList.add('hidden');
+  }
+}
+
+function updateDateCell(videoId, date) {
+  const video = state.videos.find(v => v.video_id === videoId);
+  if (video) video.upload_date = date;
+  const tr = videoTbody.querySelector(`tr[data-video-id="${videoId}"]`);
+  if (!tr) return;
+  const td = tr.querySelector('.col-date');
+  if (td) td.textContent = date || '—';
 }
 
 function setRowStatus(videoId, status, errorMsg) {

@@ -17,24 +17,64 @@ AVAILABLE_FIELDS: list[str] = [
 ]
 
 
-def _format_date(date_str: str | None) -> str:
-    """Convert YYYYMMDD to YYYY-MM-DD. Returns '0000-00-00' for None."""
+def _format_date(date_str: str | None) -> str | None:
+    """Convert YYYYMMDD to YYYY-MM-DD. Returns None if missing."""
     if date_str and len(date_str) == 8:
         return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
-    return date_str or "0000-00-00"
+    return None
+
+
+class _SilentLogger:
+    def debug(self, msg): pass
+    def info(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): pass
+
+
+def _add_cookies(opts: dict, browser: str | None) -> None:
+    """Mutate opts in-place to add cookie source if browser is specified."""
+    if browser:
+        opts["cookiesfrombrowser"] = (browser,)
+
+
+def fetch_date(url: str, browser: str | None = None) -> str | None:
+    """Fetch just the upload_date for a single video URL (full extraction)."""
+    opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
+    _add_cookies(opts, browser)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return _format_date(info.get("upload_date"))
+
+
+def iter_dates(
+    videos: list[tuple[str, str]], browser: str | None = None
+):
+    """Yield (video_id, date) reusing a single YoutubeDL instance + cookiejar."""
+    opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
+    _add_cookies(opts, browser)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        for vid_id, url in videos:
+            try:
+                info = ydl.extract_info(url, download=False)
+                date = _format_date(info.get("upload_date"))
+            except Exception:
+                date = None
+            yield vid_id, date
 
 
 def get_available_fields() -> list[str]:
     return AVAILABLE_FIELDS
 
 
-def list_videos(url: str) -> dict:
+def list_videos(url: str, browser: str | None = None) -> dict:
     """Return video list and source info from a YouTube URL (no download)."""
     ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
+        "logger": _SilentLogger(),
         "extract_flat": "in_playlist",
+        "skip_download": True,
+        "ignore_no_formats_error": True,
     }
+    _add_cookies(ydl_opts, browser)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
@@ -97,7 +137,9 @@ def _read_transcript(tmpdir: str, video_id: str) -> str:
     return " ".join(parts)
 
 
-def fetch_transcript_and_metadata(url: str, fields: list[str]) -> tuple[dict, str]:
+def fetch_transcript_and_metadata(
+    url: str, fields: list[str], browser: str | None = None
+) -> tuple[dict, str]:
     """Fetch metadata and plain-text transcript for a single video URL.
 
     Downloads subtitle files to a temp directory (video itself is skipped).
@@ -105,8 +147,8 @@ def fetch_transcript_and_metadata(url: str, fields: list[str]) -> tuple[dict, st
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
+            "logger": _SilentLogger(), "quiet": True,
+            "ignore_no_formats_error": True,
             "writesubtitles": True,
             "writeautomaticsub": True,
             "subtitleslangs": ["en", "en-US", "en-GB"],
@@ -114,6 +156,7 @@ def fetch_transcript_and_metadata(url: str, fields: list[str]) -> tuple[dict, st
             "skip_download": True,
             "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
         }
+        _add_cookies(ydl_opts, browser)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
 
