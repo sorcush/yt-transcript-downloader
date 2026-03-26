@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from backend.downloader import get_video_folder, write_video_files
 from backend.fetcher import (
@@ -29,7 +30,7 @@ _jobs: dict[str, dict] = {}
 
 @app.post("/api/fetch", response_model=FetchResponse)
 async def fetch_videos(request: FetchRequest) -> FetchResponse:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(None, list_videos, request.url)
     videos = [VideoInfo(**v) for v in result["videos"]]
     return FetchResponse(
@@ -79,7 +80,7 @@ async def get_progress(job_id: str) -> ProgressResponse:
 
 
 async def _run_download(job_id: str, request: DownloadRequest) -> None:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     for video_id in request.video_ids:
         _jobs[job_id]["videos"][video_id]["status"] = "downloading"
         try:
@@ -105,5 +106,4 @@ async def _run_download(job_id: str, request: DownloadRequest) -> None:
 
 
 # Serve frontend — must come last so /api routes take priority
-from starlette.staticfiles import StaticFiles
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")

@@ -124,11 +124,10 @@ def test_fetch_transcript_and_metadata_formats_date():
         mock_ydl.extract_info.return_value = mock_info
         mock_cls.return_value.__enter__.return_value = mock_ydl
 
-        with tempfile.TemporaryDirectory():
-            metadata, transcript = fetch_transcript_and_metadata(
-                "https://youtube.com/watch?v=abc123",
-                ["title", "upload_date", "channel"]
-            )
+        metadata, transcript = fetch_transcript_and_metadata(
+            "https://youtube.com/watch?v=abc123",
+            ["title", "upload_date", "channel"]
+        )
 
     assert metadata["title"] == "My Video"
     assert metadata["upload_date"] == "2024-01-15"
