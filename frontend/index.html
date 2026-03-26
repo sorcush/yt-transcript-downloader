@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Transcript Tool</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>YouTube Transcript Tool</h1>
+    </header>
+
+    <main>
+      <div id="main-area">
+
+        <!-- URL fetch bar -->
+        <div class="input-row">
+          <input id="url-input" type="text"
+                 placeholder="Paste YouTube URL (video, playlist, or channel)">
+          <button id="fetch-btn">Fetch</button>
+        </div>
+
+        <!-- Output folder -->
+        <div class="input-row">
+          <label for="output-folder">Output folder:</label>
+          <input id="output-folder" type="text"
+                 placeholder="e.g. /Users/you/Downloads/transcripts">
+        </div>
+
+        <!-- Status / error message -->
+        <div id="status-bar" class="hidden"></div>
+
+        <!-- Video table -->
+        <div id="table-wrapper">
+          <div id="empty-state">Paste a URL above and click Fetch</div>
+          <table id="video-table" class="hidden">
+            <thead>
+              <tr>
+                <th class="col-check">
+                  <input type="checkbox" id="select-all" title="Select all">
+                </th>
+                <th class="col-title">Title</th>
+                <th class="col-date">Date</th>
+                <th class="col-channel">Channel</th>
+                <th class="col-duration">Duration</th>
+                <th class="col-status">Status</th>
+              </tr>
+            </thead>
+            <tbody id="video-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- Bottom action bar -->
+        <div id="bottom-bar" class="hidden">
+          <span id="selection-count">0 selected</span>
+          <button id="download-btn" disabled>↓ Download Selected</button>
+        </div>
+
+      </div>
+
+      <!-- Metadata field side panel -->
+      <aside id="metadata-panel">
+        <h2>Metadata Fields</h2>
+        <p class="panel-subtitle">Included in metadata.json</p>
+        <div id="fields-list"></div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
