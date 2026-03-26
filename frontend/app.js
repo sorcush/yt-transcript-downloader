@@ -191,3 +191,105 @@ function setStatus(msg, isError = false) {
 }
 
 init();
+
+// ── Download + progress ────────────────────────────────────────────────────
+async function handleDownload() {
+  const folder = outputFolder.value.trim();
+  if (!folder) {
+    setStatus('Please enter an output folder path.', true);
+    return;
+  }
+  if (state.selectedIds.size === 0) return;
+
+  const videoUrls = {};
+  for (const video of state.videos) {
+    if (state.selectedIds.has(video.video_id)) {
+      videoUrls[video.video_id] = video.url;
+    }
+  }
+
+  // Mark all selected rows as pending
+  for (const videoId of state.selectedIds) {
+    setRowStatus(videoId, 'pending');
+  }
+  downloadBtn.disabled = true;
+  setStatus('Starting download…');
+
+  try {
+    const res = await fetch('/api/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_ids: [...state.selectedIds],
+        video_urls: videoUrls,
+        fields: [...state.selectedFields],
+        output_folder: folder,
+        channel_name: state.channel,
+        playlist_title: state.playlistTitle,
+      }),
+    });
+    if (!res.ok) throw new Error(`Server error: ${res.status}`);
+    const { job_id } = await res.json();
+    state.currentJobId = job_id;
+    startPolling(job_id);
+  } catch (err) {
+    setStatus(`Download failed: ${err.message}`, true);
+    downloadBtn.disabled = false;
+  }
+}
+
+function startPolling(jobId) {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.pollTimer = setInterval(() => pollProgress(jobId), 2000);
+}
+
+async function pollProgress(jobId) {
+  try {
+    const res = await fetch(`/api/progress/${jobId}`);
+    const data = await res.json();
+
+    for (const v of data.videos) {
+      setRowStatus(v.video_id, v.status, v.error);
+    }
+
+    const total    = data.videos.length;
+    const done     = data.videos.filter(v => v.status === 'done').length;
+    const errors   = data.videos.filter(v => v.status === 'error').length;
+    const active   = data.videos.filter(v => v.status === 'downloading').length;
+
+    if (active > 0) {
+      setStatus(`Downloading… ${done}/${total} done`);
+    }
+
+    if (data.status === 'done') {
+      clearInterval(state.pollTimer);
+      state.pollTimer = null;
+      downloadBtn.disabled = false;
+      const msg = errors > 0
+        ? `Done. ${done} downloaded, ${errors} failed.`
+        : `Done. ${done} video(s) downloaded to ${outputFolder.value.trim()}`;
+      setStatus(msg, errors > 0);
+    }
+  } catch (err) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
+    setStatus(`Polling error: ${err.message}`, true);
+    downloadBtn.disabled = false;
+  }
+}
+
+function setRowStatus(videoId, status, errorMsg) {
+  const tr = videoTbody.querySelector(`tr[data-video-id="${videoId}"]`);
+  if (!tr) return;
+  const statusTd = tr.querySelector('.col-status');
+  if (!statusTd) return;
+
+  const labels = {
+    pending:     'Pending',
+    downloading: 'Downloading',
+    done:        'Done',
+    error:       errorMsg ? `Error: ${errorMsg}` : 'Error',
+  };
+
+  statusTd.innerHTML = `<span class="status-badge status-${status}">${labels[status] || status}</span>`;
+}
