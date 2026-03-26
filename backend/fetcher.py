@@ -73,3 +73,58 @@ def list_videos(url: str) -> dict:
         "channel": channel,
         "playlist_title": playlist_title,
     }
+
+
+def _read_transcript(tmpdir: str, video_id: str) -> str:
+    """Parse a yt-dlp json3 subtitle file into plain text (no timestamps)."""
+    sub_files = list(Path(tmpdir).glob(f"{video_id}.*.json3"))
+    if not sub_files:
+        return "No transcript available"
+
+    with open(sub_files[0], encoding="utf-8") as f:
+        data = json.load(f)
+
+    parts = []
+    for event in data.get("events", []):
+        segs = event.get("segs")
+        if not segs:
+            continue
+        text = "".join(s.get("utf8", "") for s in segs)
+        text = text.replace("\n", " ").strip()
+        if text:
+            parts.append(text)
+
+    return " ".join(parts)
+
+
+def fetch_transcript_and_metadata(url: str, fields: list[str]) -> tuple[dict, str]:
+    """Fetch metadata and plain-text transcript for a single video URL.
+
+    Downloads subtitle files to a temp directory (video itself is skipped).
+    Returns (metadata_dict, transcript_text).
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitleslangs": ["en", "en-US", "en-GB"],
+            "subtitlesformat": "json3",
+            "skip_download": True,
+            "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+
+        metadata: dict = {}
+        for field in fields:
+            value = info.get(field)
+            if field == "upload_date" and value:
+                value = _format_date(value)
+            metadata[field] = value
+
+        video_id = info.get("id", "")
+        transcript = _read_transcript(tmpdir, video_id)
+
+    return metadata, transcript

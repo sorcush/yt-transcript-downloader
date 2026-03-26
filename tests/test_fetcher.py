@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 from backend.fetcher import list_videos, _format_date
 
@@ -64,3 +65,72 @@ def test_list_videos_playlist_sorted_oldest_first():
     assert len(result["videos"]) == 2
     assert result["videos"][0]["video_id"] == "v1"   # oldest first
     assert result["videos"][1]["video_id"] == "v2"
+
+
+import json
+import tempfile
+from backend.fetcher import _read_transcript, fetch_transcript_and_metadata
+
+
+def test_read_transcript_parses_json3():
+    json3_data = {
+        "events": [
+            {"tStartMs": 0, "dDurationMs": 2000,
+             "segs": [{"utf8": "Hello world"}]},
+            {"tStartMs": 2000, "dDurationMs": 2000,
+             "segs": [{"utf8": " this is a test"}]},
+        ]
+    }
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sub_file = Path(tmpdir) / "abc123.en.json3"
+        sub_file.write_text(json.dumps(json3_data))
+        result = _read_transcript(tmpdir, "abc123")
+
+    assert result == "Hello world this is a test"
+
+
+def test_read_transcript_returns_fallback_when_no_file():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = _read_transcript(tmpdir, "abc123")
+    assert result == "No transcript available"
+
+
+def test_read_transcript_skips_empty_segments():
+    json3_data = {
+        "events": [
+            {"tStartMs": 0, "segs": [{"utf8": "Hello"}]},
+            {"tStartMs": 500, "segs": [{"utf8": "\n"}]},   # newline-only, skip
+            {"tStartMs": 1000, "segs": [{"utf8": "World"}]},
+        ]
+    }
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sub_file = Path(tmpdir) / "abc123.en.json3"
+        sub_file.write_text(json.dumps(json3_data))
+        result = _read_transcript(tmpdir, "abc123")
+
+    assert result == "Hello World"
+
+
+def test_fetch_transcript_and_metadata_formats_date():
+    mock_info = {
+        "id": "abc123",
+        "title": "My Video",
+        "upload_date": "20240115",
+        "channel": "Test Channel",
+        "duration": 300,
+    }
+    with patch("yt_dlp.YoutubeDL") as mock_cls:
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = mock_info
+        mock_cls.return_value.__enter__.return_value = mock_ydl
+
+        with tempfile.TemporaryDirectory():
+            metadata, transcript = fetch_transcript_and_metadata(
+                "https://youtube.com/watch?v=abc123",
+                ["title", "upload_date", "channel"]
+            )
+
+    assert metadata["title"] == "My Video"
+    assert metadata["upload_date"] == "2024-01-15"
+    assert metadata["channel"] == "Test Channel"
+    assert transcript == "No transcript available"   # no subtitle file in mock
