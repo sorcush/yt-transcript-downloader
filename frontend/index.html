@@ -15,20 +15,19 @@
     <main>
       <div id="main-area">
 
-        <!-- URL fetch bar -->
+        <!-- Single command bar -->
         <div class="input-row">
           <input id="url-input" type="text"
                  placeholder="Paste YouTube URL (video, playlist, or channel)">
           <button id="fetch-btn">Fetch</button>
-        </div>
-
-        <!-- Output folder + browser cookies -->
-        <div class="input-row">
-          <label for="output-folder">Output folder:</label>
+          <span id="fetched-chip" class="status-chip"></span>
+          <span id="dates-chip" class="status-chip">
+            <span id="dates-chip-text"></span>
+            <button id="dates-stop-btn" class="chip-stop">✕</button>
+          </span>
           <input id="output-folder" type="text"
-                 placeholder="e.g. /Users/you/Downloads/transcripts">
+                 placeholder="Output folder">
           <button id="browse-btn" type="button">Browse</button>
-          <label for="browser-select">Cookies from:</label>
           <select id="browser-select">
             <option value="">None</option>
             <option value="chrome" selected>Chrome</option>
@@ -38,15 +37,6 @@
             <option value="brave">Brave</option>
             <option value="chromium">Chromium</option>
           </select>
-        </div>
-
-        <!-- Status / date-fetch indicator (single row) -->
-        <div id="info-row" class="hidden">
-          <span id="status-bar"></span>
-          <span id="date-status" class="hidden">
-            <span id="date-status-text">Fetching dates…</span>
-            <button id="date-stop-btn">✕ Stop</button>
-          </span>
         </div>
 
         <!-- Video table -->
