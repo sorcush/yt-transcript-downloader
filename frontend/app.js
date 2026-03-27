@@ -19,8 +19,6 @@ const fetchBtn       = document.getElementById('fetch-btn');
 const outputFolder   = document.getElementById('output-folder');
 const browserSelect  = document.getElementById('browser-select');
 const browseBtn      = document.getElementById('browse-btn');
-const infoRow        = document.getElementById('info-row');
-const statusBar      = document.getElementById('status-bar');
 const emptyState     = document.getElementById('empty-state');
 const videoTable     = document.getElementById('video-table');
 const videoTbody     = document.getElementById('video-tbody');
@@ -29,9 +27,10 @@ const bottomBar      = document.getElementById('bottom-bar');
 const selectionCount = document.getElementById('selection-count');
 const downloadBtn    = document.getElementById('download-btn');
 const fieldsList     = document.getElementById('fields-list');
-const dateStatus     = document.getElementById('date-status');
-const dateStatusText = document.getElementById('date-status-text');
-const dateStopBtn    = document.getElementById('date-stop-btn');
+const fetchedChip    = document.getElementById('fetched-chip');
+const datesChip      = document.getElementById('dates-chip');
+const datesChipText  = document.getElementById('dates-chip-text');
+const datesStopBtn   = document.getElementById('dates-stop-btn');
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
@@ -44,14 +43,14 @@ async function init() {
   for (const th of videoTable.querySelectorAll('th[data-sort-col]')) {
     th.addEventListener('click', () => handleSortClick(th.dataset.sortCol));
   }
-  dateStopBtn.addEventListener('click', () => {
+  datesStopBtn.addEventListener('click', () => {
     if (state.dateAbort) state.dateAbort.abort();
   });
   await loadFields();
 }
 
 // ── Fields panel ───────────────────────────────────────────────────────────
-const DEFAULT_FIELDS = new Set(['title', 'upload_date', 'channel', 'duration']);
+const DEFAULT_FIELDS = new Set(['title', 'description', 'upload_date', 'channel']);
 
 async function loadFields() {
   const res = await fetch('/api/fields');
@@ -135,7 +134,9 @@ async function handleFetch() {
     state.playlistTitle = data.playlist_title;
     state.selectedIds.clear();
     renderTable();
-    setStatus(`Fetched ${data.videos.length} video(s)`);
+    fetchedChip.textContent = `✓ ${data.videos.length} fetched`;
+    fetchedChip.classList.remove('error');
+    fetchedChip.classList.add('visible');
     fetchDatesLazy(data.videos);
   } catch (err) {
     setStatus(`Error: ${err.message}`, true);
@@ -278,12 +279,11 @@ function updateSelectionUI() {
   selectAll.indeterminate = count > 0 && count < state.videos.length;
 }
 
-// ── Status bar ─────────────────────────────────────────────────────────────
+// ── Status display ─────────────────────────────────────────────────────────
 function setStatus(msg, isError = false) {
-  statusBar.textContent = msg;
-  statusBar.classList.remove('error');
-  if (isError) statusBar.classList.add('error');
-  infoRow.classList.remove('hidden');
+  fetchedChip.textContent = msg;
+  fetchedChip.classList.toggle('error', isError);
+  fetchedChip.classList.add('visible');
 }
 
 init();
@@ -386,8 +386,8 @@ async function fetchDatesLazy(videos) {
   let loaded = 0;
 
   state.dateAbort = new AbortController();
-  dateStatusText.textContent = `Fetching dates… 0/${total}`;
-  dateStatus.classList.remove('hidden');
+  datesChipText.textContent = `Dates 0/${total}`;
+  datesChip.classList.add('visible');
 
   try {
     const res = await fetch('/api/dates', {
@@ -412,14 +412,14 @@ async function fetchDatesLazy(videos) {
           const { video_id, upload_date } = JSON.parse(line.slice(6));
           updateDateCell(video_id, upload_date);
           loaded++;
-          dateStatusText.textContent = `Fetching dates… ${loaded}/${total}`;
+          datesChipText.textContent = `Dates ${loaded}/${total}`;
         }
       }
     }
   } catch (err) {
     if (err.name !== 'AbortError') console.error('Date fetch error:', err);
   } finally {
-    dateStatus.classList.add('hidden');
+    datesChip.classList.remove('visible');
   }
 }
 
