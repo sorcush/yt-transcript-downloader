@@ -90,19 +90,6 @@ select:focus { border-color: #cba6f7; }
 .status-chip.visible { visibility: visible; }
 .status-chip.error { color: #f38ba8; border-color: #f38ba8; }
 
-.chip-stop {
-  background: transparent;
-  border: none;
-  color: #f38ba8;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 0;
-  cursor: pointer;
-  line-height: 1;
-}
-
-.chip-stop:hover { color: #ff7f7f; background: transparent; }
-
 button {
   background: #cba6f7;
   color: #1e1e2e;
@@ -117,6 +104,19 @@ button {
 
 button:hover { background: #d0b4fa; }
 button:disabled { background: #45475a; color: #6c7086; cursor: not-allowed; }
+
+.chip-stop {
+  background: transparent;
+  border: none;
+  color: #f38ba8;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.chip-stop:hover { color: #ff7f7f; background: transparent; }
 
 /* ── Table ─────────────────────────────────── */
 #table-wrapper {
