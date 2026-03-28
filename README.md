@@ -1,6 +1,6 @@
-# YouTube Automation
+# YouTube Transcript Downloader
 
-A local web app for downloading YouTube video transcripts and metadata. Paste a URL (video, playlist, or channel), select videos, choose metadata fields, and download organized transcripts and metadata to your local filesystem.
+A local web app for downloading YouTube video transcripts and metadata. Paste a URL (video, playlist, or channel), select videos, choose metadata fields, and download transcripts and metadata to your local filesystem.
 
 No YouTube API key required — uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for all YouTube access.
 
@@ -10,7 +10,7 @@ No YouTube API key required — uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) 
 - **Select specific videos** from an interactive table with sortable columns
 - **Choose metadata fields** to include (title, date, channel, duration, tags, and more)
 - **Download transcripts** as plain text and metadata as JSON
-- **Organized output** in a `Channel/Playlist/Date-Title/` folder structure
+- **Simple output** in a `Date-Title/` folder structure inside your chosen directory
 - **Browser cookie support** for age-restricted content (Chrome, Firefox, Safari, Edge, Brave)
 - **Real-time progress** tracking per video during downloads
 
@@ -21,7 +21,7 @@ pip install -r requirements.txt
 ./run.sh
 ```
 
-This starts the server at `http://localhost:8000` and opens your browser.
+This starts the server at `http://localhost:8000`.
 
 ## Tech Stack
 
@@ -60,11 +60,9 @@ requirements.txt    # Python dependencies
 
 ```
 output_folder/
-  Channel Name/
-    Playlist Name/              # only for playlists
-      2024-01-15-Video-Title/
-        metadata.json           # selected fields only
-        transcript.txt          # plain text, no timestamps
+  2024-01-15-Video-Title/
+    metadata.json           # selected fields only
+    transcript.txt          # plain text, no timestamps
 ```
 
 ## Testing
