@@ -39,8 +39,6 @@ class DownloadRequest(BaseModel):
     video_urls: dict[str, str]  # video_id -> url
     fields: list[str]
     output_folder: str
-    channel_name: Optional[str] = None
-    playlist_title: Optional[str] = None
     cookies_browser: Optional[str] = None
 
 

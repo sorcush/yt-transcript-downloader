@@ -12,17 +12,11 @@ def sanitize_name(name: str) -> str:
 
 def get_video_folder(
     output_folder: str,
-    channel: str,
-    playlist_title: str | None,
     upload_date: str,
     title: str,
 ) -> Path:
     """Return the Path for a video's output folder, creating it if needed."""
-    parts: list[str] = [output_folder, sanitize_name(channel)]
-    if playlist_title:
-        parts.append(sanitize_name(playlist_title))
-    parts.append(f"{upload_date}-{sanitize_name(title)}")
-    folder = Path(*parts)
+    folder = Path(output_folder) / f"{upload_date}-{sanitize_name(title)}"
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 

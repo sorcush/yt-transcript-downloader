@@ -50,7 +50,7 @@ async function init() {
 }
 
 // ── Fields panel ───────────────────────────────────────────────────────────
-const DEFAULT_FIELDS = new Set(['title', 'description', 'upload_date', 'channel']);
+const DEFAULT_FIELDS = new Set(['title', 'description', 'upload_date', 'webpage_url']);
 
 async function loadFields() {
   const res = await fetch('/api/fields');
@@ -320,8 +320,6 @@ async function handleDownload() {
         video_urls: videoUrls,
         fields: [...state.selectedFields],
         output_folder: folder,
-        channel_name: state.channel,
-        playlist_title: state.playlistTitle,
         cookies_browser: browserSelect.value || null,
       }),
     });

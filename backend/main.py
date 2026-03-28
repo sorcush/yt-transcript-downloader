@@ -183,8 +183,6 @@ async def _run_download(job_id: str, request: DownloadRequest) -> None:
             _jobs[job_id]["videos"][video_id]["title"] = title
             folder = get_video_folder(
                 request.output_folder,
-                request.channel_name or metadata.get("channel") or "Unknown",
-                request.playlist_title,
                 metadata.get("upload_date") or "unknown-date",
                 title,
             )

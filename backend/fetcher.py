@@ -73,6 +73,7 @@ def list_videos(url: str, browser: str | None = None) -> dict:
         "extract_flat": "in_playlist",
         "skip_download": True,
         "ignore_no_formats_error": True,
+        "extractor_args": {"youtube": {"lang": [""]}},
     }
     _add_cookies(ydl_opts, browser)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -137,6 +138,26 @@ def _read_transcript(tmpdir: str, video_id: str) -> str:
     return " ".join(parts)
 
 
+def _original_lang_from_captions(info: dict) -> str | None:
+    """Detect original language from automatic_captions by finding entries
+    whose subtitle URL has no tlang= parameter (i.e. not auto-translated)."""
+    for lang, formats in info.get("automatic_captions", {}).items():
+        for fmt in formats:
+            url = fmt.get("url", "")
+            if "tlang=" not in url:
+                return lang
+    return None
+
+
+def _probe_language(url: str, browser: str | None) -> str:
+    """Return the video's original language code, defaulting to 'en'."""
+    opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
+    _add_cookies(opts, browser)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    return _original_lang_from_captions(info) or info.get("language") or "en"
+
+
 def fetch_transcript_and_metadata(
     url: str, fields: list[str], browser: str | None = None
 ) -> tuple[dict, str]:
@@ -145,13 +166,20 @@ def fetch_transcript_and_metadata(
     Downloads subtitle files to a temp directory (video itself is skipped).
     Returns (metadata_dict, transcript_text).
     """
+    lang = _probe_language(url, browser)
+    # For English, include regional variants; for other languages, just that code.
+    if lang.startswith("en"):
+        sub_langs = ["en", "en-US", "en-GB"]
+    else:
+        sub_langs = [lang]
+
     with tempfile.TemporaryDirectory() as tmpdir:
         ydl_opts = {
             "logger": _SilentLogger(), "quiet": True,
             "ignore_no_formats_error": True,
             "writesubtitles": True,
             "writeautomaticsub": True,
-            "subtitleslangs": ["en", "en-US", "en-GB"],
+            "subtitleslangs": sub_langs,
             "subtitlesformat": "json3",
             "skip_download": True,
             "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
