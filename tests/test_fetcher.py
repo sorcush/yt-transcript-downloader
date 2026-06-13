@@ -74,8 +74,8 @@ def test_worker_count_scales_with_videos():
     assert fetcher._worker_count(10) == 1      # 10 per worker
     assert fetcher._worker_count(11) == 2
     assert fetcher._worker_count(95) == 10
-    # Large channels are capped, not unbounded.
-    assert fetcher._worker_count(415) == fetcher.MAX_DATE_FETCH_WORKERS
+    assert fetcher._worker_count(415) == 42    # ~10 videos per worker
+    # Only pathologically large channels hit the cap.
     assert fetcher._worker_count(100000) == fetcher.MAX_DATE_FETCH_WORKERS
 
 

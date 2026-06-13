@@ -20,12 +20,12 @@ AVAILABLE_FIELDS: list[str] = [
 ]
 
 # Date extraction scales the worker pool with the number of videos: roughly one
-# worker per VIDEOS_PER_WORKER videos, capped at MAX_DATE_FETCH_WORKERS. The cap
-# is deliberately modest — browser cookies are decrypted only once (see
-# _export_browser_cookies), so workers only do network I/O, and too many
-# concurrent requests just invites YouTube throttling.
+# worker per VIDEOS_PER_WORKER videos, capped at MAX_DATE_FETCH_WORKERS. Cookies
+# are decrypted only once (see _export_browser_cookies), so workers only do
+# network I/O — the cap exists only to bound thread/connection count for huge
+# channels. Lower it if YouTube starts throttling many concurrent requests.
 VIDEOS_PER_WORKER = 10
-MAX_DATE_FETCH_WORKERS = 12
+MAX_DATE_FETCH_WORKERS = 50
 
 
 def _worker_count(num_videos: int) -> int:
