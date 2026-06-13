@@ -47,23 +47,24 @@ def test_iter_dates_failure_yields_none():
     assert results == {"v1": None}
 
 
-def test_iter_dates_reuses_instance_per_thread_with_browser_cookies():
-    """Cookies are loaded via cookiesfrombrowser on a per-thread instance that is
-    reused across videos — so the browser store is decrypted at most once per
-    worker (not once per video), and no shared cookie file is written."""
-    with patch("yt_dlp.YoutubeDL") as mock_cls:
-        mock_cls.return_value.extract_info.return_value = {"upload_date": "20240101"}
-        videos = [(f"v{i}", f"u{i}") for i in range(40)]
-        results = dict(iter_dates(videos, browser="chrome"))
+def test_iter_dates_decrypts_cookies_once_and_shares_via_cookiefile():
+    """Browser cookies are decrypted ONCE (no per-worker decrypt storm) and shared
+    with workers via cookiefile — never cookiesfrombrowser on each worker."""
+    with patch("backend.fetcher._export_browser_cookies", return_value="/tmp/c.txt") as mock_export:
+        with patch("yt_dlp.YoutubeDL") as mock_cls:
+            mock_cls.return_value.extract_info.return_value = {"upload_date": "20240101"}
+            videos = [(f"v{i}", f"u{i}") for i in range(40)]
+            results = dict(iter_dates(videos, browser="chrome"))
 
     assert len(results) == 40
     assert all(d == "2024-01-01" for d in results.values())
-    # Far fewer instances than videos — at most one per worker thread.
+    mock_export.assert_called_once_with("chrome")        # decrypted exactly once
+    # At most one instance per worker thread, each reading the shared cookie file.
     assert mock_cls.call_count <= fetcher._worker_count(40)
     for call in mock_cls.call_args_list:
         opts = call.args[0]
-        assert opts.get("cookiesfrombrowser") == ("chrome",)
-        assert "cookiefile" not in opts
+        assert opts.get("cookiefile") == "/tmp/c.txt"
+        assert "cookiesfrombrowser" not in opts
 
 
 def test_worker_count_scales_with_videos():
@@ -73,8 +74,8 @@ def test_worker_count_scales_with_videos():
     assert fetcher._worker_count(10) == 1      # 10 per worker
     assert fetcher._worker_count(11) == 2
     assert fetcher._worker_count(95) == 10
-    assert fetcher._worker_count(415) == 42
-    # Very large channels are capped, not unbounded.
+    # Large channels are capped, not unbounded.
+    assert fetcher._worker_count(415) == fetcher.MAX_DATE_FETCH_WORKERS
     assert fetcher._worker_count(100000) == fetcher.MAX_DATE_FETCH_WORKERS
 
 

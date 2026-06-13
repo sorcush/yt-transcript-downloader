@@ -20,11 +20,12 @@ AVAILABLE_FIELDS: list[str] = [
 ]
 
 # Date extraction scales the worker pool with the number of videos: roughly one
-# worker per VIDEOS_PER_WORKER videos (so wall-clock time stays ~VIDEOS_PER_WORKER
-# sequential fetches), capped at MAX_DATE_FETCH_WORKERS so very large channels
-# don't spawn an unbounded number of threads / concurrent requests / cookie loads.
+# worker per VIDEOS_PER_WORKER videos, capped at MAX_DATE_FETCH_WORKERS. The cap
+# is deliberately modest — browser cookies are decrypted only once (see
+# _export_browser_cookies), so workers only do network I/O, and too many
+# concurrent requests just invites YouTube throttling.
 VIDEOS_PER_WORKER = 10
-MAX_DATE_FETCH_WORKERS = 50
+MAX_DATE_FETCH_WORKERS = 12
 
 
 def _worker_count(num_videos: int) -> int:
@@ -63,30 +64,58 @@ def fetch_date(url: str, browser: str | None = None) -> str | None:
         return _format_date(info.get("upload_date"))
 
 
+def _export_browser_cookies(browser: str) -> str | None:
+    """Decrypt the browser's cookies ONCE and write them to a temp Netscape
+    cookie file, returning its path (or None on failure).
+
+    Workers then read this cheap file via `cookiefile` instead of each
+    decrypting the browser store — decrypting per worker caused a long startup
+    stall. yt-dlp only writes a cookiejar back to `cookiefile` from
+    close()/__exit__ (there is no __del__), so as long as workers never use a
+    `with` block, the shared file is read-only in practice and cannot be
+    corrupted by concurrent writers.
+    """
+    try:
+        ydl = yt_dlp.YoutubeDL({
+            "logger": _SilentLogger(),
+            "quiet": True,
+            "cookiesfrombrowser": (browser,),
+        })
+        fd, path = tempfile.mkstemp(suffix=".cookies.txt")
+        os.close(fd)
+        ydl.cookiejar.save(path, ignore_discard=True, ignore_expires=True)
+        return path
+    except Exception:
+        return None
+
+
 def iter_dates(
     videos: list[tuple[str, str]], browser: str | None = None
 ):
     """Yield (video_id, date) for each video, extracting concurrently.
 
     The worker pool scales with the number of videos (~one worker per
-    VIDEOS_PER_WORKER videos, capped at MAX_DATE_FETCH_WORKERS), so wall-clock
-    time stays roughly constant regardless of channel size. Each worker thread
-    builds ONE YoutubeDL instance and reuses it for every video it handles, so
-    the browser cookie store is decrypted at most once per worker rather than
-    once per video. Instances are never shared across threads, and no cookie
-    file is used — yt-dlp writes the cookiejar back to a `cookiefile` on close,
-    so a shared file would be corrupted by concurrent writers. Results are
-    yielded as they complete, so order is not guaranteed; callers key results by
-    video_id.
+    VIDEOS_PER_WORKER videos, capped at MAX_DATE_FETCH_WORKERS). Browser cookies
+    are decrypted ONCE up front (not per worker) and shared with workers through
+    a temp cookie file, so worker count drives only network concurrency — no
+    cookie-decrypt storm on startup. Each worker thread builds one YoutubeDL
+    instance and reuses it; instances are never used as context managers, so
+    yt-dlp never writes the cookiejar back to the shared file (no corruption).
+    Results are yielded as they complete, so order is not guaranteed; callers
+    key results by video_id.
     """
     videos = list(videos)
+    cookiefile = _export_browser_cookies(browser) if browser else None
     local = threading.local()
 
     def _thread_ydl() -> "yt_dlp.YoutubeDL":
         ydl = getattr(local, "ydl", None)
         if ydl is None:
             opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
-            _add_cookies(opts, browser)
+            if cookiefile:
+                opts["cookiefile"] = cookiefile
+            # No `with`: the instance is never closed, so yt-dlp never saves the
+            # cookiejar back to cookiefile — concurrent workers only read it.
             ydl = yt_dlp.YoutubeDL(opts)
             local.ydl = ydl
         return ydl
@@ -98,10 +127,17 @@ def iter_dates(
         except Exception:
             return vid_id, None
 
-    with ThreadPoolExecutor(max_workers=_worker_count(len(videos))) as executor:
-        futures = [executor.submit(_fetch_one, vid_id, url) for vid_id, url in videos]
-        for future in as_completed(futures):
-            yield future.result()
+    try:
+        with ThreadPoolExecutor(max_workers=_worker_count(len(videos))) as executor:
+            futures = [executor.submit(_fetch_one, vid_id, url) for vid_id, url in videos]
+            for future in as_completed(futures):
+                yield future.result()
+    finally:
+        if cookiefile:
+            try:
+                os.remove(cookiefile)
+            except OSError:
+                pass
 
 
 def get_available_fields() -> list[str]:
