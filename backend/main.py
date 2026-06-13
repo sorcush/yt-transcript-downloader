@@ -1,6 +1,8 @@
 # backend/main.py
 import asyncio
 import json
+import os
+import shutil
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
@@ -10,7 +12,8 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.downloader import get_video_folder, write_video_files
+from backend import store
+from backend.downloader import get_video_folder, move_audio, write_video_files
 from backend.fetcher import (
     fetch_date,
     fetch_transcript_and_metadata,
@@ -22,9 +25,14 @@ from backend.models import (
     DatesRequest,
     DownloadRequest,
     DownloadResponse,
+    FavoriteDetail,
+    FavoriteSummary,
     FetchRequest,
     FetchResponse,
+    OpenFolderRequest,
     ProgressResponse,
+    RenameFavoriteRequest,
+    SaveFavoriteRequest,
     VideoInfo,
     VideoProgress,
 )
@@ -84,6 +92,67 @@ async def stream_dates(request: DatesRequest) -> StreamingResponse:
 @app.get("/api/fields")
 async def get_fields() -> list[str]:
     return get_available_fields()
+
+
+@app.get("/api/favorites", response_model=list[FavoriteSummary])
+async def list_favorites() -> list[FavoriteSummary]:
+    return [FavoriteSummary(**f) for f in store.list_favorites()]
+
+
+@app.post("/api/favorites")
+async def save_favorite(request: SaveFavoriteRequest) -> dict:
+    if request.source_type == "video":
+        raise HTTPException(status_code=400, detail="Single videos cannot be saved as favorites.")
+    videos = [v.model_dump() for v in request.videos]
+    fav_id = store.save_favorite(
+        request.url, request.name, request.source_type, request.output_folder, videos
+    )
+    return {"id": fav_id}
+
+
+@app.get("/api/favorites/{fav_id}", response_model=FavoriteDetail)
+async def get_favorite(fav_id: int) -> FavoriteDetail:
+    fav = store.get_favorite(fav_id)
+    if fav is None:
+        raise HTTPException(status_code=404, detail="Favorite not found.")
+    return FavoriteDetail(
+        id=fav["id"], name=fav["name"], url=fav["url"],
+        source_type=fav["source_type"], output_folder=fav["output_folder"],
+        videos=[VideoInfo(**{k: v[k] for k in
+                             ("video_id", "title", "upload_date", "channel",
+                              "duration", "url", "has_transcript", "has_audio")})
+                for v in fav["videos"]],
+    )
+
+
+@app.post("/api/favorites/{fav_id}")
+async def rename_favorite(fav_id: int, request: RenameFavoriteRequest) -> dict:
+    if store.get_favorite(fav_id) is None:
+        raise HTTPException(status_code=404, detail="Favorite not found.")
+    store.rename_favorite(fav_id, request.name)
+    return {"id": fav_id, "name": request.name}
+
+
+@app.delete("/api/favorites/{fav_id}")
+async def delete_favorite(fav_id: int) -> dict:
+    store.delete_favorite(fav_id)
+    return {"id": fav_id, "deleted": True}
+
+
+@app.post("/api/open-folder")
+async def open_folder(request: OpenFolderRequest) -> dict:
+    if not request.folder.strip():
+        raise HTTPException(status_code=400, detail="No folder path provided.")
+    loop = asyncio.get_running_loop()
+    path = os.path.expanduser(request.folder.strip())
+
+    def _open():
+        return subprocess.run(["open", path], capture_output=True, text=True, timeout=30)
+
+    result = await loop.run_in_executor(None, _open)
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=(result.stderr or "Unable to open folder.").strip())
+    return {"opened": path}
 
 
 @app.get("/api/pick-folder")
@@ -171,10 +240,15 @@ async def _run_download(job_id: str, request: DownloadRequest) -> None:
             _jobs[job_id]["videos"][video_id]["status"] = "cancelled"
             continue
         _jobs[job_id]["videos"][video_id]["status"] = "downloading"
+        tmpdir = None
         try:
             url = request.video_urls[video_id]
-            metadata, transcript = await loop.run_in_executor(
-                None, fetch_transcript_and_metadata, url, request.fields, request.cookies_browser
+            metadata, transcript, audio_path, tmpdir = await loop.run_in_executor(
+                None,
+                lambda u=url: fetch_transcript_and_metadata(
+                    u, request.fields, request.cookies_browser,
+                    request.download_transcript, request.download_audio,
+                ),
             )
             if _jobs[job_id]["cancelled"]:
                 _jobs[job_id]["videos"][video_id]["status"] = "cancelled"
@@ -187,10 +261,25 @@ async def _run_download(job_id: str, request: DownloadRequest) -> None:
                 title,
             )
             write_video_files(folder, metadata, transcript)
+            audio_written = False
+            if audio_path:
+                move_audio(audio_path, folder)
+                audio_written = True
+            if request.favorite_id is not None:
+                store.mark_downloaded(
+                    request.favorite_id, video_id,
+                    has_transcript=request.download_transcript and transcript is not None,
+                    has_audio=audio_written,
+                    metadata=metadata,
+                )
+                store.set_output_folder(request.favorite_id, request.output_folder)
             _jobs[job_id]["videos"][video_id]["status"] = "done"
         except Exception as exc:
             _jobs[job_id]["videos"][video_id]["status"] = "error"
             _jobs[job_id]["videos"][video_id]["error"] = str(exc)
+        finally:
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
     _jobs[job_id]["status"] = "cancelled" if _jobs[job_id]["cancelled"] else "done"
 
 
