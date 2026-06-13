@@ -210,6 +210,7 @@ function renderTable() {
     checkTd.appendChild(cb);
 
     const titleTd  = document.createElement('td');
+    titleTd.className = 'col-title';
     const titleLink = document.createElement('a');
     titleLink.href = video.url;
     titleLink.target = '_blank';
@@ -219,8 +220,8 @@ function renderTable() {
     titleTd.appendChild(titleLink);
 
     const dateTd    = makeTd(video.upload_date || '…', 'col-date muted');
-    const channelTd = makeTd(video.channel || '—', 'muted');
-    const durTd     = makeTd(formatDuration(video.duration), 'muted');
+    const channelTd = makeTd(video.channel || '—', 'col-channel muted');
+    const durTd     = makeTd(formatDuration(video.duration), 'col-duration muted');
     const statusTd  = document.createElement('td');
     statusTd.className = 'col-status';
 

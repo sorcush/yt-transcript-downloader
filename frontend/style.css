@@ -162,10 +162,16 @@ td {
 tbody tr:hover { background: #26263a; }
 
 .col-check { width: 36px; }
-.col-date  { width: 110px; }
-.col-channel { width: 150px; }
-.col-duration { width: 80px; }
-.col-status { width: 100px; }
+
+/* Value columns (3: date, 4: channel, 5: duration, 6: status) shrink to fit
+   their widest value (no truncation, no wasted space); Title (column 2)
+   absorbs the remaining width. */
+#video-table th:nth-child(n+3),
+#video-table td:nth-child(n+3) {
+  width: 1%;
+  white-space: nowrap;
+}
+.col-title { width: auto; }
 
 th[data-sort-col] { cursor: pointer; user-select: none; }
 th[data-sort-col]:hover { color: #cdd6f4; }
