@@ -48,6 +48,26 @@ def test_iter_dates_failure_yields_none():
     assert results == {"v1": None}
 
 
+def test_iter_dates_loads_browser_cookies_once_and_shares_them():
+    """With a browser selected, cookies must be decrypted ONCE and shared via a
+    cookie file — never re-decrypted per worker (the cause of the slowdown)."""
+    with patch("backend.fetcher._export_browser_cookies", return_value="/tmp/c.txt") as mock_export:
+        with patch("yt_dlp.YoutubeDL") as mock_cls:
+            inst = mock_cls.return_value.__enter__.return_value
+            inst.extract_info.return_value = {"upload_date": "20240101"}
+            videos = [("v1", "u1"), ("v2", "u2"), ("v3", "u3")]
+            results = dict(iter_dates(videos, browser="chrome"))
+
+    assert results == {"v1": "2024-01-01", "v2": "2024-01-01", "v3": "2024-01-01"}
+    mock_export.assert_called_once_with("chrome")
+    # Every worker instance uses the shared cookie file, none re-decrypts the browser.
+    worker_opts = [call.args[0] for call in mock_cls.call_args_list]
+    assert len(worker_opts) == 3
+    for opts in worker_opts:
+        assert opts.get("cookiefile") == "/tmp/c.txt"
+        assert "cookiesfrombrowser" not in opts
+
+
 def _make_ydl_mock(info):
     mock_ydl = MagicMock()
     mock_ydl.extract_info.return_value = info
