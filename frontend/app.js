@@ -381,7 +381,10 @@ async function pollProgress(jobId) {
     const data = await res.json();
 
     for (const v of data.videos) {
-      setRowStatus(v.video_id, v.status, v.error);
+      // Update the badge flags BEFORE rendering status, since setRowStatus reads
+      // them to draw the T/A badges for a done row. (Otherwise the last video to
+      // finish renders empty: polling stops once the job is done, so there's no
+      // later cycle to correct it.)
       if (v.status === 'done') {
         const video = state.videos.find(x => x.video_id === v.video_id);
         if (video) {
@@ -389,6 +392,7 @@ async function pollProgress(jobId) {
           if (state.downloadAudio) video.has_audio = true;
         }
       }
+      setRowStatus(v.video_id, v.status, v.error);
     }
 
     const total    = data.videos.length;
