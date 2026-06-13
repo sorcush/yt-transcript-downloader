@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>YouTube Transcript Downloader</title>
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
   <div id="app">
@@ -20,12 +20,12 @@
           <select id="favorites-select" aria-label="Favorites">
             <option value="">★ Favorites…</option>
           </select>
-          <button id="rename-fav-btn" type="button" title="Rename favorite" disabled>✎</button>
-          <button id="delete-fav-btn" type="button" title="Delete favorite" disabled>🗑</button>
+          <button id="rename-fav-btn" class="icon-btn" type="button" title="Rename favorite" disabled>✎</button>
+          <button id="delete-fav-btn" class="icon-btn" type="button" title="Delete favorite" disabled>🗑</button>
           <input id="url-input" type="text"
                  placeholder="Paste YouTube URL (video, playlist, or channel)">
           <button id="fetch-btn">Fetch</button>
-          <button id="save-fav-btn" type="button" title="Save to favorites" disabled>☆</button>
+          <button id="save-fav-btn" class="icon-btn" type="button" title="Save to favorites" disabled>☆</button>
           <input id="fav-name-input" type="text" class="hidden"
                  placeholder="Favorite name" aria-label="Favorite name">
           <button id="fav-name-confirm" type="button" class="hidden">Save</button>
