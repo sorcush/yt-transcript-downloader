@@ -15,6 +15,7 @@ const state = {
   favorites: [],
   downloadTranscript: true,
   downloadAudio: false,
+  lastDownloadPayload: null,  // remembered for Restart
 };
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -45,6 +46,10 @@ const openFolderBtn  = document.getElementById('open-folder-btn');
 const copyPathBtn    = document.getElementById('copy-path-btn');
 const dlTranscript   = document.getElementById('dl-transcript');
 const dlAudio        = document.getElementById('dl-audio');
+const pauseBtn       = document.getElementById('pause-btn');
+const resumeBtn      = document.getElementById('resume-btn');
+const cancelBtn      = document.getElementById('cancel-btn');
+const restartBtn     = document.getElementById('restart-btn');
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
@@ -54,6 +59,10 @@ async function init() {
   browseBtn.addEventListener('click', handleBrowse);
   selectAll.addEventListener('change', handleSelectAll);
   downloadBtn.addEventListener('click', handleDownload);
+  pauseBtn.addEventListener('click', handlePause);
+  resumeBtn.addEventListener('click', handleResume);
+  cancelBtn.addEventListener('click', handleCancel);
+  restartBtn.addEventListener('click', handleRestart);
   for (const th of videoTable.querySelectorAll('th[data-sort-col]')) {
     th.addEventListener('click', () => handleSortClick(th.dataset.sortCol));
   }
@@ -338,27 +347,31 @@ async function handleDownload() {
     }
   }
 
-  // Mark all selected rows as pending
-  for (const videoId of state.selectedIds) {
+  const payload = {
+    video_ids: [...state.selectedIds],
+    video_urls: videoUrls,
+    fields: [...state.selectedFields],
+    output_folder: folder,
+    cookies_browser: browserSelect.value || null,
+    download_transcript: state.downloadTranscript,
+    download_audio: state.downloadAudio,
+    favorite_id: state.activeFavoriteId,
+  };
+  await startDownloadJob(payload);
+}
+
+async function startDownloadJob(payload) {
+  state.lastDownloadPayload = payload;             // remembered for Restart
+  for (const videoId of payload.video_ids) {
     setRowStatus(videoId, 'pending');
   }
-  downloadBtn.disabled = true;
+  updateJobControls('running');
   setStatus('Starting download…');
-
   try {
     const res = await fetch('/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        video_ids: [...state.selectedIds],
-        video_urls: videoUrls,
-        fields: [...state.selectedFields],
-        output_folder: folder,
-        cookies_browser: browserSelect.value || null,
-        download_transcript: state.downloadTranscript,
-        download_audio: state.downloadAudio,
-        favorite_id: state.activeFavoriteId,
-      }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(`Server error: ${res.status}`);
     const { job_id } = await res.json();
@@ -366,8 +379,51 @@ async function handleDownload() {
     startPolling(job_id);
   } catch (err) {
     setStatus(`Download failed: ${err.message}`, true);
-    downloadBtn.disabled = false;
+    updateJobControls('error');
   }
+}
+
+// Show the right controls for the current job state.
+function updateJobControls(status) {
+  const running = status === 'running';
+  const paused = status === 'paused';
+  const active = running || paused;
+  pauseBtn.classList.toggle('hidden', !running);
+  resumeBtn.classList.toggle('hidden', !paused);
+  cancelBtn.classList.toggle('hidden', !active);
+  restartBtn.classList.toggle('hidden', active || !state.lastDownloadPayload);
+  downloadBtn.classList.toggle('hidden', active);
+  if (!active) updateSelectionUI();   // re-evaluate download button enabled state
+}
+
+async function handlePause() {
+  if (!state.currentJobId) return;
+  await fetch(`/api/pause/${state.currentJobId}`, { method: 'POST' });
+  updateJobControls('paused');
+  setStatus('Pausing after current video…');
+}
+
+async function handleResume() {
+  if (!state.currentJobId) return;
+  await fetch(`/api/resume/${state.currentJobId}`, { method: 'POST' });
+  updateJobControls('running');
+  setStatus('Resuming…');
+}
+
+async function handleCancel() {
+  if (!state.currentJobId) return;
+  await fetch(`/api/cancel/${state.currentJobId}`, { method: 'POST' });
+  setStatus('Cancelling…');
+}
+
+async function handleRestart() {
+  if (!state.lastDownloadPayload) return;
+  // Cancel any current job first so it doesn't keep writing while we restart.
+  if (state.currentJobId) {
+    await fetch(`/api/cancel/${state.currentJobId}`, { method: 'POST' });
+  }
+  if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+  await startDownloadJob(state.lastDownloadPayload);
 }
 
 function startPolling(jobId) {
@@ -382,42 +438,51 @@ async function pollProgress(jobId) {
 
     for (const v of data.videos) {
       // Update the badge flags BEFORE rendering status, since setRowStatus reads
-      // them to draw the T/A badges for a done row. (Otherwise the last video to
-      // finish renders empty: polling stops once the job is done, so there's no
-      // later cycle to correct it.)
+      // them to draw the T/A badges for a done row. Set them to exactly this
+      // download's selection (re-download reconciles the folder, so badges must
+      // match rather than accumulate).
       if (v.status === 'done') {
         const video = state.videos.find(x => x.video_id === v.video_id);
         if (video) {
-          if (state.downloadTranscript) video.has_transcript = true;
-          if (state.downloadAudio) video.has_audio = true;
+          video.has_transcript = state.downloadTranscript;
+          video.has_audio = state.downloadAudio;
         }
       }
       setRowStatus(v.video_id, v.status, v.error);
     }
+
+    updateJobControls(data.status);
 
     const total    = data.videos.length;
     const done     = data.videos.filter(v => v.status === 'done').length;
     const errors   = data.videos.filter(v => v.status === 'error').length;
     const active   = data.videos.filter(v => v.status === 'downloading').length;
 
-    if (active > 0) {
+    if (data.status === 'paused') {
+      setStatus(`Paused. ${done}/${total} done — Resume to continue.`);
+    } else if (active > 0) {
       setStatus(`Downloading… ${done}/${total} done`);
     }
 
-    if (data.status === 'done') {
+    if (data.status === 'done' || data.status === 'cancelled') {
       clearInterval(state.pollTimer);
       state.pollTimer = null;
-      downloadBtn.disabled = false;
-      const msg = errors > 0
-        ? `Done. ${done} downloaded, ${errors} failed.`
-        : `Done. ${done} video(s) downloaded to ${outputFolder.value.trim()}`;
-      setStatus(msg, errors > 0);
+      const cancelledCount = data.videos.filter(v => v.status === 'cancelled').length;
+      let msg;
+      if (data.status === 'cancelled') {
+        msg = `Cancelled. ${done} downloaded, ${cancelledCount} skipped.`;
+      } else if (errors > 0) {
+        msg = `Done. ${done} downloaded, ${errors} failed.`;
+      } else {
+        msg = `Done. ${done} video(s) downloaded to ${outputFolder.value.trim()}`;
+      }
+      setStatus(msg, errors > 0 || data.status === 'cancelled');
     }
   } catch (err) {
     clearInterval(state.pollTimer);
     state.pollTimer = null;
     setStatus(`Polling error: ${err.message}`, true);
-    downloadBtn.disabled = false;
+    updateJobControls('error');
   }
 }
 

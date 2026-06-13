@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>YouTube Transcript Downloader</title>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
   <div id="app">
@@ -74,7 +74,13 @@
         <!-- Bottom action bar -->
         <div id="bottom-bar" class="hidden">
           <span id="selection-count">0 selected</span>
-          <button id="download-btn" disabled>↓ Download Selected</button>
+          <div class="bar-actions">
+            <button id="pause-btn" type="button" class="hidden">⏸ Pause</button>
+            <button id="resume-btn" type="button" class="hidden">▶ Resume</button>
+            <button id="cancel-btn" type="button" class="hidden">✕ Cancel</button>
+            <button id="restart-btn" type="button" class="hidden">↻ Restart</button>
+            <button id="download-btn" disabled>↓ Download Selected</button>
+          </div>
         </div>
 
       </div>
@@ -93,6 +99,6 @@
     </main>
   </div>
 
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

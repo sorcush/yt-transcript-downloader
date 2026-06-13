@@ -299,3 +299,43 @@ def test_cancel_marks_pending_videos_as_cancelled():
     # v1 cancelled after fetch (before file write); v2 cancelled before fetch
     assert statuses["v1"] == "cancelled"
     assert statuses["v2"] == "cancelled"
+
+
+def test_pause_resume_cancel_state_transitions():
+    from backend.main import _jobs
+
+    _jobs["pjob"] = {"status": "running", "cancelled": False, "paused": False, "videos": {}}
+    try:
+        # Pause a running job.
+        assert client.post("/api/pause/pjob").json()["status"] == "paused"
+        assert _jobs["pjob"]["paused"] is True
+
+        # Resume back to running.
+        assert client.post("/api/resume/pjob").json()["status"] == "running"
+        assert _jobs["pjob"]["paused"] is False
+
+        # Cancel clears the paused flag so a paused loop can wake and finish.
+        _jobs["pjob"]["paused"] = True
+        _jobs["pjob"]["status"] = "paused"
+        assert client.post("/api/cancel/pjob").json()["status"] == "cancelled"
+        assert _jobs["pjob"]["cancelled"] is True
+        assert _jobs["pjob"]["paused"] is False
+    finally:
+        del _jobs["pjob"]
+
+
+def test_pause_only_affects_running_jobs():
+    from backend.main import _jobs
+
+    _jobs["djob"] = {"status": "done", "cancelled": False, "paused": False, "videos": {}}
+    try:
+        # Pausing a finished job is a no-op.
+        assert client.post("/api/pause/djob").json()["status"] == "done"
+        assert _jobs["djob"]["paused"] is False
+    finally:
+        del _jobs["djob"]
+
+
+def test_pause_resume_unknown_job():
+    assert client.post("/api/pause/nope").json()["status"] == "unknown"
+    assert client.post("/api/resume/nope").json()["status"] == "unknown"

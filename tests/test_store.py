@@ -59,13 +59,15 @@ def test_mark_downloaded_sets_flags_and_metadata(db):
     assert v1["metadata"] == {"title": "One"}
 
 
-def test_mark_downloaded_does_not_unset_existing_flag(db):
+def test_mark_downloaded_sets_exact_flags(db):
+    # Re-downloading reconciles the folder to the latest selection, so the flags
+    # reflect exactly the most recent download (they do not accumulate).
     fav_id = db.save_favorite("http://list", "L", "playlist", None, _videos())
-    db.mark_downloaded(fav_id, "v1", has_transcript=True, has_audio=False, metadata={})
+    db.mark_downloaded(fav_id, "v1", has_transcript=True, has_audio=True, metadata={})
     db.mark_downloaded(fav_id, "v1", has_transcript=False, has_audio=True, metadata={})
     fav = db.get_favorite(fav_id)
     v1 = next(v for v in fav["videos"] if v["video_id"] == "v1")
-    assert v1["has_transcript"] is True
+    assert v1["has_transcript"] is False   # transcript no longer part of the download
     assert v1["has_audio"] is True
 
 

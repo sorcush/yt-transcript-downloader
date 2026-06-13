@@ -23,15 +23,25 @@ def get_video_folder(
 
 
 def write_video_files(folder: Path, metadata: dict, transcript: str | None) -> None:
-    """Write metadata.json (always) and transcript.txt (only if transcript given)."""
+    """Write metadata.json (always; overwrites). Write transcript.txt if a
+    transcript is given, otherwise remove any stale one so the folder reflects
+    exactly the latest download."""
     with open(folder / "metadata.json", "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
+    transcript_path = folder / "transcript.txt"
     if transcript is not None:
-        with open(folder / "transcript.txt", "w", encoding="utf-8") as f:
+        with open(transcript_path, "w", encoding="utf-8") as f:
             f.write(transcript)
+    elif transcript_path.exists():
+        transcript_path.unlink()
 
 
-def move_audio(audio_path: str, folder: Path) -> None:
-    """Move a downloaded audio file into folder, renamed to audio.<native-ext>."""
-    ext = Path(audio_path).suffix
-    shutil.move(audio_path, folder / f"audio{ext}")
+def place_audio(folder: Path, audio_path: str | None) -> None:
+    """Reconcile the folder's audio to the latest download: remove any existing
+    audio.* (e.g. a stale audio.webm), then move the new file in as
+    audio.<native-ext> if one was downloaded."""
+    for old in folder.glob("audio.*"):
+        old.unlink()
+    if audio_path:
+        ext = Path(audio_path).suffix
+        shutil.move(audio_path, folder / f"audio{ext}")

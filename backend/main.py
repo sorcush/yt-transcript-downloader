@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import store
-from backend.downloader import get_video_folder, move_audio, write_video_files
+from backend.downloader import get_video_folder, place_audio, write_video_files
 from backend.fetcher import (
     fetch_date,
     fetch_transcript_and_metadata,
@@ -198,6 +198,7 @@ async def start_download(
     _jobs[job_id] = {
         "status": "running",
         "cancelled": False,
+        "paused": False,
         "videos": {
             vid_id: {"status": "pending", "title": vid_id, "error": None}
             for vid_id in request.video_ids
@@ -230,15 +231,43 @@ async def cancel_job(job_id: str) -> dict:
     if not job:
         return {"job_id": job_id, "status": "unknown"}
     job["cancelled"] = True
+    job["paused"] = False  # let a paused loop wake up and finish cancelling
     return {"job_id": job_id, "status": "cancelled"}
+
+
+@app.post("/api/pause/{job_id}")
+async def pause_job(job_id: str) -> dict:
+    job = _jobs.get(job_id)
+    if not job:
+        return {"job_id": job_id, "status": "unknown"}
+    if job["status"] == "running":
+        job["paused"] = True
+        job["status"] = "paused"
+    return {"job_id": job_id, "status": job["status"]}
+
+
+@app.post("/api/resume/{job_id}")
+async def resume_job(job_id: str) -> dict:
+    job = _jobs.get(job_id)
+    if not job:
+        return {"job_id": job_id, "status": "unknown"}
+    if job["status"] == "paused":
+        job["paused"] = False
+        job["status"] = "running"
+    return {"job_id": job_id, "status": job["status"]}
 
 
 async def _run_download(job_id: str, request: DownloadRequest) -> None:
     loop = asyncio.get_running_loop()
     for video_id in request.video_ids:
+        # Pause takes effect between videos: the current download always
+        # finishes, then we wait here until resumed or cancelled.
+        while _jobs[job_id]["paused"] and not _jobs[job_id]["cancelled"]:
+            await asyncio.sleep(0.3)
         if _jobs[job_id]["cancelled"]:
             _jobs[job_id]["videos"][video_id]["status"] = "cancelled"
             continue
+        _jobs[job_id]["status"] = "running"
         _jobs[job_id]["videos"][video_id]["status"] = "downloading"
         tmpdir = None
         try:
@@ -260,16 +289,14 @@ async def _run_download(job_id: str, request: DownloadRequest) -> None:
                 metadata.get("upload_date") or "unknown-date",
                 title,
             )
+            # Reconcile the folder to exactly this download (overwrite + remove stale).
             write_video_files(folder, metadata, transcript)
-            audio_written = False
-            if audio_path:
-                move_audio(audio_path, folder)
-                audio_written = True
+            place_audio(folder, audio_path)
             if request.favorite_id is not None:
                 store.mark_downloaded(
                     request.favorite_id, video_id,
                     has_transcript=request.download_transcript and transcript is not None,
-                    has_audio=audio_written,
+                    has_audio=audio_path is not None,
                     metadata=metadata,
                 )
                 store.set_output_folder(request.favorite_id, request.output_folder)

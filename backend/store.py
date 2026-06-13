@@ -127,13 +127,17 @@ def delete_favorite(fav_id: int) -> None:
 
 def mark_downloaded(fav_id: int, video_id: str, has_transcript: bool,
                     has_audio: bool, metadata: dict) -> None:
+    """Record the result of a download, setting the flags to EXACTLY this
+    download's outcome. Re-downloading reconciles the folder to match the
+    current selection (stale files removed), so the badges must follow suit
+    rather than accumulate."""
     conn = _connect()
     try:
         conn.execute(
             """
             UPDATE video SET
-                has_transcript = CASE WHEN ? THEN 1 ELSE has_transcript END,
-                has_audio      = CASE WHEN ? THEN 1 ELSE has_audio END,
+                has_transcript = ?,
+                has_audio      = ?,
                 metadata_json  = ?
             WHERE favorite_id = ? AND video_id = ?
             """,

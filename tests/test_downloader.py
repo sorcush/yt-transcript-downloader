@@ -1,7 +1,7 @@
 import json
 import tempfile
 from pathlib import Path
-from backend.downloader import move_audio, sanitize_name, get_video_folder, write_video_files
+from backend.downloader import place_audio, sanitize_name, get_video_folder, write_video_files
 
 
 def test_sanitize_name_removes_unsafe_chars():
@@ -62,7 +62,16 @@ def test_write_video_files_writes_transcript_when_present():
         assert (folder / "transcript.txt").read_text(encoding="utf-8") == "hello world"
 
 
-def test_move_audio_renames_to_audio_with_native_ext():
+def test_write_video_files_removes_stale_transcript():
+    with tempfile.TemporaryDirectory() as d:
+        folder = Path(d)
+        (folder / "transcript.txt").write_text("old transcript")
+        write_video_files(folder, {"title": "X"}, None)   # transcript not selected now
+        assert not (folder / "transcript.txt").exists()
+        assert (folder / "metadata.json").exists()
+
+
+def test_place_audio_renames_to_audio_with_native_ext():
     with tempfile.TemporaryDirectory() as d:
         src_dir = Path(d) / "src"
         src_dir.mkdir()
@@ -70,6 +79,25 @@ def test_move_audio_renames_to_audio_with_native_ext():
         audio_src.write_bytes(b"fake-audio")
         dest = Path(d) / "dest"
         dest.mkdir()
-        move_audio(str(audio_src), dest)
+        place_audio(dest, str(audio_src))
         assert (dest / "audio.m4a").read_bytes() == b"fake-audio"
         assert not audio_src.exists()
+
+
+def test_place_audio_replaces_stale_audio_of_other_ext():
+    with tempfile.TemporaryDirectory() as d:
+        folder = Path(d)
+        (folder / "audio.webm").write_bytes(b"old")   # leftover from a prior download
+        src = folder / "vid.m4a"
+        src.write_bytes(b"new")
+        place_audio(folder, str(src))
+        assert not (folder / "audio.webm").exists()    # stale removed
+        assert (folder / "audio.m4a").read_bytes() == b"new"
+
+
+def test_place_audio_removes_existing_when_no_new_audio():
+    with tempfile.TemporaryDirectory() as d:
+        folder = Path(d)
+        (folder / "audio.m4a").write_bytes(b"old")
+        place_audio(folder, None)                      # audio not selected this time
+        assert not (folder / "audio.m4a").exists()

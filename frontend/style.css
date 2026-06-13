@@ -223,6 +223,16 @@ td.muted { color: #6c7086; }
 
 #selection-count { font-size: 13px; color: #a6adc8; }
 
+.bar-actions { display: flex; gap: 8px; align-items: center; }
+#cancel-btn { background: #f38ba8; }
+#cancel-btn:hover { background: #f5a3bd; }
+#pause-btn, #resume-btn, #restart-btn {
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  color: #cdd6f4;
+}
+#pause-btn:hover, #resume-btn:hover, #restart-btn:hover { background: #313244; }
+
 /* ── Side panel ────────────────────────────── */
 #metadata-panel {
   width: 220px;
