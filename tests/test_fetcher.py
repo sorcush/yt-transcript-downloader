@@ -69,12 +69,26 @@ def test_iter_dates_reuses_instance_per_thread_with_browser_cookies():
 def test_worker_count_scales_with_videos():
     assert fetcher._worker_count(0) == 1       # empty -> still valid pool size
     assert fetcher._worker_count(1) == 1
+    assert fetcher._worker_count(4) == 1       # only a few new videos -> 1 worker
     assert fetcher._worker_count(10) == 1      # 10 per worker
     assert fetcher._worker_count(11) == 2
     assert fetcher._worker_count(95) == 10
     assert fetcher._worker_count(415) == 42
     # Very large channels are capped, not unbounded.
     assert fetcher._worker_count(100000) == fetcher.MAX_DATE_FETCH_WORKERS
+
+
+def test_iter_dates_sizes_pool_to_videos_received_not_total():
+    """The pool is sized from the videos passed in. Callers only pass unfetched
+    videos, so a 400-video channel with 4 new videos uses a single worker."""
+    with patch("yt_dlp.YoutubeDL") as mock_cls:
+        mock_cls.return_value.extract_info.return_value = {"upload_date": "20240101"}
+        four_new = [(f"v{i}", f"u{i}") for i in range(4)]
+        results = dict(iter_dates(four_new))
+
+    assert len(results) == 4
+    # ceil(4 / 10) == 1 worker, so at most one YoutubeDL instance is built.
+    assert mock_cls.call_count == 1
 
 
 def _make_ydl_mock(info):
