@@ -21,7 +21,7 @@ pip install -r requirements.txt
 ./run.sh
 ```
 
-This starts the server at `http://localhost:8000`.
+This starts the server at `http://localhost:8001`.
 
 ## Tech Stack
 

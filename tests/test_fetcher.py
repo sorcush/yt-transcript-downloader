@@ -1,6 +1,6 @@
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from backend.fetcher import list_videos, _format_date
+from backend.fetcher import list_videos, _format_date, iter_dates
 
 
 def test_format_date_converts_yyyymmdd():
@@ -13,6 +13,39 @@ def test_format_date_handles_none():
 
 def test_format_date_handles_short_string():
     assert _format_date("bad") is None
+
+
+def test_iter_dates_returns_all_results_parallel():
+    infos = {
+        "https://youtube.com/watch?v=v1": {"upload_date": "20240101"},
+        "https://youtube.com/watch?v=v2": {"upload_date": "20240202"},
+        "https://youtube.com/watch?v=v3": {"upload_date": None},
+    }
+
+    def fake_extract(url, download=False):
+        return infos[url]
+
+    with patch("yt_dlp.YoutubeDL") as mock_cls:
+        inst = mock_cls.return_value.__enter__.return_value
+        inst.extract_info.side_effect = fake_extract
+        videos = [("v1", "https://youtube.com/watch?v=v1"),
+                  ("v2", "https://youtube.com/watch?v=v2"),
+                  ("v3", "https://youtube.com/watch?v=v3")]
+        results = dict(iter_dates(videos))
+
+    assert results == {"v1": "2024-01-01", "v2": "2024-02-02", "v3": None}
+
+
+def test_iter_dates_failure_yields_none():
+    def boom(url, download=False):
+        raise RuntimeError("network down")
+
+    with patch("yt_dlp.YoutubeDL") as mock_cls:
+        inst = mock_cls.return_value.__enter__.return_value
+        inst.extract_info.side_effect = boom
+        results = dict(iter_dates([("v1", "https://youtube.com/watch?v=v1")]))
+
+    assert results == {"v1": None}
 
 
 def _make_ydl_mock(info):
@@ -68,8 +101,9 @@ def test_list_videos_playlist_sorted_oldest_first():
 
 
 import json
+import shutil
 import tempfile
-from backend.fetcher import _read_transcript, fetch_transcript_and_metadata
+from backend.fetcher import _find_audio, _read_transcript, fetch_transcript_and_metadata
 
 
 def test_read_transcript_parses_json3():
@@ -111,6 +145,17 @@ def test_read_transcript_skips_empty_segments():
     assert result == "Hello World"
 
 
+def test_find_audio_ignores_subtitle_files(tmp_path):
+    (tmp_path / "vid.en.json3").write_text("{}")
+    (tmp_path / "vid.m4a").write_bytes(b"a")
+    assert _find_audio(str(tmp_path), "vid") == str(tmp_path / "vid.m4a")
+
+
+def test_find_audio_returns_none_when_absent(tmp_path):
+    (tmp_path / "vid.en.json3").write_text("{}")
+    assert _find_audio(str(tmp_path), "vid") is None
+
+
 def test_fetch_transcript_and_metadata_formats_date():
     mock_info = {
         "id": "abc123",
@@ -124,12 +169,16 @@ def test_fetch_transcript_and_metadata_formats_date():
         mock_ydl.extract_info.return_value = mock_info
         mock_cls.return_value.__enter__.return_value = mock_ydl
 
-        metadata, transcript = fetch_transcript_and_metadata(
+        metadata, transcript, audio_path, tmpdir = fetch_transcript_and_metadata(
             "https://youtube.com/watch?v=abc123",
             ["title", "upload_date", "channel"]
         )
 
-    assert metadata["title"] == "My Video"
-    assert metadata["upload_date"] == "2024-01-15"
-    assert metadata["channel"] == "Test Channel"
-    assert transcript == "No transcript available"   # no subtitle file in mock
+    try:
+        assert metadata["title"] == "My Video"
+        assert metadata["upload_date"] == "2024-01-15"
+        assert metadata["channel"] == "Test Channel"
+        assert transcript == "No transcript available"   # no subtitle file in mock
+        assert audio_path is None
+    finally:
+        shutil.rmtree(tmpdir)

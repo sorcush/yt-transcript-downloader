@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>YouTube Transcript Downloader</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
   <div id="app">
@@ -17,9 +17,18 @@
 
         <!-- Single command bar -->
         <div class="input-row">
+          <select id="favorites-select" aria-label="Favorites">
+            <option value="">★ Favorites…</option>
+          </select>
+          <button id="rename-fav-btn" type="button" title="Rename favorite" disabled>✎</button>
+          <button id="delete-fav-btn" type="button" title="Delete favorite" disabled>🗑</button>
           <input id="url-input" type="text"
                  placeholder="Paste YouTube URL (video, playlist, or channel)">
           <button id="fetch-btn">Fetch</button>
+          <button id="save-fav-btn" type="button" title="Save to favorites" disabled>☆</button>
+          <input id="fav-name-input" type="text" class="hidden"
+                 placeholder="Favorite name" aria-label="Favorite name">
+          <button id="fav-name-confirm" type="button" class="hidden">Save</button>
           <span id="fetched-chip" class="status-chip"></span>
           <span id="dates-chip" class="status-chip">
             <span id="dates-chip-text"></span>
@@ -29,6 +38,8 @@
                  placeholder="e.g. ~/Downloads/transcripts"
                  aria-label="Output folder">
           <button id="browse-btn" type="button">Browse</button>
+          <button id="open-folder-btn" type="button" title="Open in Finder">Open in Finder</button>
+          <button id="copy-path-btn" type="button" title="Copy path">Copy path</button>
           <select id="browser-select" aria-label="Cookies from browser">
             <option value="">None</option>
             <option value="chrome" selected>Chrome</option>
@@ -70,6 +81,11 @@
 
       <!-- Metadata field side panel -->
       <aside id="metadata-panel">
+        <h2>Download</h2>
+        <div id="download-types">
+          <label class="field-label"><input type="checkbox" id="dl-transcript" checked> Transcript</label>
+          <label class="field-label"><input type="checkbox" id="dl-audio"> Audio</label>
+        </div>
         <h2>Metadata Fields</h2>
         <p class="panel-subtitle">Included in metadata.json</p>
         <div id="fields-list"></div>
@@ -77,6 +93,6 @@
     </main>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

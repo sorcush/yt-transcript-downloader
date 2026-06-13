@@ -9,8 +9,8 @@ cleanup() {
 trap cleanup INT TERM HUP EXIT
 
 set -m  # enable job control so uvicorn gets its own process group
-uvicorn backend.main:app --reload --port 8000 &
+uvicorn backend.main:app --reload --port 8001 &
 SERVER_PID=$!
 sleep 1
-echo "Server running at http://localhost:8000  (Ctrl+C to stop)"
+echo "Server running at http://localhost:8001  (Ctrl+C to stop)"
 wait $SERVER_PID

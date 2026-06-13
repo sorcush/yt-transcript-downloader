@@ -162,10 +162,16 @@ td {
 tbody tr:hover { background: #26263a; }
 
 .col-check { width: 36px; }
-.col-date  { width: 110px; }
-.col-channel { width: 150px; }
-.col-duration { width: 80px; }
-.col-status { width: 100px; }
+
+/* Value columns (3: date, 4: channel, 5: duration, 6: status) shrink to fit
+   their widest value (no truncation, no wasted space); Title (column 2)
+   absorbs the remaining width. */
+#video-table th:nth-child(n+3),
+#video-table td:nth-child(n+3) {
+  width: 1%;
+  white-space: nowrap;
+}
+.col-title { width: auto; }
 
 th[data-sort-col] { cursor: pointer; user-select: none; }
 th[data-sort-col]:hover { color: #cdd6f4; }
@@ -232,3 +238,23 @@ td.muted { color: #6c7086; }
 
 /* ── Utilities ─────────────────────────────── */
 .hidden { display: none !important; }
+
+/* Download-type badges in the status column */
+.dl-badge {
+  display: inline-block;
+  min-width: 16px;
+  padding: 1px 5px;
+  margin-right: 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  text-align: center;
+}
+.badge-transcript { background: #4a9d6f; }
+.badge-audio { background: #a9744a; }
+
+/* Inline favorite-name save field */
+#fav-name-input { max-width: 180px; }
+#download-types { margin-bottom: 12px; }
+#download-types .field-label { display: block; }
