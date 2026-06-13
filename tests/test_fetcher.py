@@ -59,11 +59,22 @@ def test_iter_dates_reuses_instance_per_thread_with_browser_cookies():
     assert len(results) == 40
     assert all(d == "2024-01-01" for d in results.values())
     # Far fewer instances than videos — at most one per worker thread.
-    assert mock_cls.call_count <= fetcher.DATE_FETCH_WORKERS
+    assert mock_cls.call_count <= fetcher._worker_count(40)
     for call in mock_cls.call_args_list:
         opts = call.args[0]
         assert opts.get("cookiesfrombrowser") == ("chrome",)
         assert "cookiefile" not in opts
+
+
+def test_worker_count_scales_with_videos():
+    assert fetcher._worker_count(0) == 1       # empty -> still valid pool size
+    assert fetcher._worker_count(1) == 1
+    assert fetcher._worker_count(10) == 1      # 10 per worker
+    assert fetcher._worker_count(11) == 2
+    assert fetcher._worker_count(95) == 10
+    assert fetcher._worker_count(415) == 42
+    # Very large channels are capped, not unbounded.
+    assert fetcher._worker_count(100000) == fetcher.MAX_DATE_FETCH_WORKERS
 
 
 def _make_ydl_mock(info):

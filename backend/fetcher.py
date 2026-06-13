@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import tempfile
 import threading
@@ -18,8 +19,19 @@ AVAILABLE_FIELDS: list[str] = [
     "is_live", "was_live", "age_limit",
 ]
 
-# Number of concurrent workers for per-video date extraction.
-DATE_FETCH_WORKERS = 8
+# Date extraction scales the worker pool with the number of videos: roughly one
+# worker per VIDEOS_PER_WORKER videos (so wall-clock time stays ~VIDEOS_PER_WORKER
+# sequential fetches), capped at MAX_DATE_FETCH_WORKERS so very large channels
+# don't spawn an unbounded number of threads / concurrent requests / cookie loads.
+VIDEOS_PER_WORKER = 10
+MAX_DATE_FETCH_WORKERS = 50
+
+
+def _worker_count(num_videos: int) -> int:
+    """Workers needed so each handles about VIDEOS_PER_WORKER videos (>=1, capped)."""
+    if num_videos <= 0:
+        return 1
+    return max(1, min(MAX_DATE_FETCH_WORKERS, math.ceil(num_videos / VIDEOS_PER_WORKER)))
 
 
 def _format_date(date_str: str | None) -> str | None:
@@ -56,14 +68,18 @@ def iter_dates(
 ):
     """Yield (video_id, date) for each video, extracting concurrently.
 
-    Each worker thread builds ONE YoutubeDL instance and reuses it for every
-    video it handles, so the browser cookie store is decrypted at most once per
-    worker (~DATE_FETCH_WORKERS times) rather than once per video. Instances are
-    never shared across threads, and no cookie file is used — yt-dlp writes the
-    cookiejar back to a `cookiefile` on close, so a shared file would be
-    corrupted by concurrent writers. Results are yielded as they complete, so
-    order is not guaranteed; callers key results by video_id.
+    The worker pool scales with the number of videos (~one worker per
+    VIDEOS_PER_WORKER videos, capped at MAX_DATE_FETCH_WORKERS), so wall-clock
+    time stays roughly constant regardless of channel size. Each worker thread
+    builds ONE YoutubeDL instance and reuses it for every video it handles, so
+    the browser cookie store is decrypted at most once per worker rather than
+    once per video. Instances are never shared across threads, and no cookie
+    file is used — yt-dlp writes the cookiejar back to a `cookiefile` on close,
+    so a shared file would be corrupted by concurrent writers. Results are
+    yielded as they complete, so order is not guaranteed; callers key results by
+    video_id.
     """
+    videos = list(videos)
     local = threading.local()
 
     def _thread_ydl() -> "yt_dlp.YoutubeDL":
@@ -82,7 +98,7 @@ def iter_dates(
         except Exception:
             return vid_id, None
 
-    with ThreadPoolExecutor(max_workers=DATE_FETCH_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=_worker_count(len(videos))) as executor:
         futures = [executor.submit(_fetch_one, vid_id, url) for vid_id, url in videos]
         for future in as_completed(futures):
             yield future.result()
