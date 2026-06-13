@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS favorite (
     url           TEXT UNIQUE NOT NULL,
     name          TEXT NOT NULL,            -- user-supplied label
     source_type   TEXT,                     -- 'playlist' | 'channel'
+    output_folder TEXT,                     -- remembered download folder for this favorite
     added_at      TEXT,                     -- ISO timestamp
     last_fetched_at TEXT
 );
@@ -89,7 +90,8 @@ Download status (`has_transcript`, `has_audio`) and saved `metadata_json` come *
 ### Data-access API (illustrative)
 - `list_favorites() -> list[dict]`
 - `get_favorite(fav_id) -> dict | None` (with its videos)
-- `save_favorite(url, name, source_type, videos) -> int` (upsert by `url`; inserts new videos, preserves existing rows' flags/metadata)
+- `save_favorite(url, name, source_type, output_folder, videos) -> int` (upsert by `url`; inserts new videos, preserves existing rows' flags/metadata)
+- `set_output_folder(fav_id, output_folder)` (called when the favorite's folder changes / on download)
 - `rename_favorite(fav_id, name)`
 - `delete_favorite(fav_id)`
 - `upsert_videos(fav_id, videos)` (used by incremental fetch)
@@ -102,14 +104,14 @@ Download status (`has_transcript`, `has_audio`) and saved `metadata_json` come *
 ### Saving (☆ button + inline name field)
 - The ☆ button sits next to **Fetch** in the command bar. It is enabled only when a playlist/channel is currently loaded.
 - Clicking ☆ reveals a small **inline text input** in the command bar, pre-filled with the auto-detected playlist/channel title (from `list_videos`), plus a confirm button. The user edits the name and confirms.
-- On confirm, `POST /api/favorites` saves the URL, name, source_type, and the current video rows (title, date, channel, duration, url). `has_transcript`/`has_audio` default to 0; `metadata_json` NULL.
+- On confirm, `POST /api/favorites` saves the URL, name, source_type, the current **output folder** value, and the current video rows (title, date, channel, duration, url). `has_transcript`/`has_audio` default to 0; `metadata_json` NULL.
 - `favorite.url` is `UNIQUE`: re-saving the same URL updates the existing favorite (incl. name) rather than duplicating.
 - Single-video URLs are not saveable (☆ disabled / hidden for `source_type == 'video'`).
 - After save, the ☆ reflects saved state (★) and the favorite appears in the dropdown.
 
 ### Re-opening (★ dropdown)
 - The ★ dropdown lists saved favorites by name. Each entry has a rename (✎) and delete affordance.
-- Selecting a favorite calls `GET /api/favorites/{id}` and renders the saved video table **instantly, with no network** — including saved dates and T/A badges. The favorite's URL populates the URL input.
+- Selecting a favorite calls `GET /api/favorites/{id}` and renders the saved video table **instantly, with no network** — including saved dates and T/A badges. The favorite's URL populates the URL input, and its saved **output folder autofills** the output-folder field.
 - Rename: inline edit → `PATCH`/`POST /api/favorites/{id}` updating `name`.
 - Delete: `DELETE /api/favorites/{id}` (cascades to its videos).
 
@@ -121,6 +123,13 @@ Download status (`has_transcript`, `has_audio`) and saved `metadata_json` come *
   - **Videos removed** from the playlist are **kept** in the favorite (they may have been downloaded).
 - `last_fetched_at` is updated.
 - Parallel date extraction then runs for **new videos only** (those without a date).
+
+### Output folder + actions
+- A favorite remembers an `output_folder`. Picking the favorite autofills the output-folder field; saving captures the current value; downloading with the favorite active updates it to the folder used.
+- Two buttons sit next to the output-folder field (next to the existing **Browse** button):
+  - **Open in Finder** → `POST /api/open-folder` with the current output-folder value; the backend runs `open <expanded-path>` (macOS) to reveal it in Finder. The path is `expanduser`-expanded; if it doesn't exist, the endpoint returns an error shown in the status chip.
+  - **Copy path** → client-side only; copies the current output-folder value to the clipboard via `navigator.clipboard.writeText`.
+- Both buttons operate on the **current value of the output-folder field** (which autofills from the favorite but can be edited), not a separate stored value — so they work whether or not a favorite is active, as long as the field is non-empty.
 
 ---
 
@@ -146,7 +155,7 @@ Per selected video, in its per-video output folder (`output_folder/<date>-<title
 - Returns metadata + transcript (if requested) + audio file info (if requested).
 
 ### Persistence write-back
-After each video finishes, the backend calls `store.mark_downloaded(...)` updating `has_transcript`/`has_audio` and storing `metadata_json` — **only when a favorite is active** (`favorite_id` present in the download request). Downloads without an active favorite behave as today (no DB write).
+After each video finishes, the backend calls `store.mark_downloaded(...)` updating `has_transcript`/`has_audio` and storing `metadata_json` — **only when a favorite is active** (`favorite_id` present in the download request). When a favorite is active, the request's `output_folder` is also persisted to the favorite (`set_output_folder`), so the remembered folder tracks the last folder actually used. Downloads without an active favorite behave as today (no DB write).
 
 ---
 
@@ -160,20 +169,21 @@ After each video finishes, the backend calls `store.mark_downloaded(...)` updati
 | GET | `/api/favorites/{id}` | Saved videos for instant render |
 | POST | `/api/favorites/{id}` | Rename a favorite |
 | DELETE | `/api/favorites/{id}` | Delete a favorite (cascade) |
+| POST | `/api/open-folder` | Reveal a folder path in Finder (`open`), expanduser-expanded |
 | POST | `/api/fetch` | Unchanged; frontend reconciles into saved set when a favorite is active |
 | POST | `/api/dates` | Unchanged contract; now parallel internally |
 | POST | `/api/download` | Adds `download_transcript: bool`, `download_audio: bool`, optional `favorite_id` |
 
 ### Models (`backend/models.py`)
-- New: `FavoriteSummary`, `FavoriteDetail` (favorite + `list[VideoInfo]`-like rows with `has_transcript`/`has_audio`), `SaveFavoriteRequest`, `RenameFavoriteRequest`.
+- New: `FavoriteSummary` (incl. `output_folder`), `FavoriteDetail` (favorite + `list[VideoInfo]`-like rows with `has_transcript`/`has_audio`), `SaveFavoriteRequest` (incl. `output_folder`), `RenameFavoriteRequest`, `OpenFolderRequest` (`folder: str`).
 - `DownloadRequest` gains `download_transcript: bool = True`, `download_audio: bool = False`, `favorite_id: Optional[int] = None`.
 - `VideoInfo` (or a derived model for favorites) carries `has_transcript`/`has_audio` for badge rendering.
 
 ### Frontend (`frontend/`)
-- Command bar: add ★ Favorites dropdown + ☆ save button + inline name field (Layout Option A).
+- Command bar: add ★ Favorites dropdown + ☆ save button + inline name field (Layout Option A). Add **Open in Finder** and **Copy path** buttons next to the output-folder field.
 - Right panel: add Transcript/Audio checkboxes above Metadata Fields; wire into `state` and the download request.
 - Status column: render T / A badges from `has_transcript`/`has_audio` (saved or freshly downloaded). Live download progress still flows through `/api/progress` polling; on completion, badges update for the downloaded types.
-- `state` additions: `activeFavoriteId`, `downloadTranscript`, `downloadAudio`, `favorites` list.
+- `state` additions: `activeFavoriteId`, `downloadTranscript`, `downloadAudio`, `favorites` list. Output folder autofills from the active favorite on pick.
 
 ---
 
@@ -192,6 +202,7 @@ After each video finishes, the backend calls `store.mark_downloaded(...)` updati
 - Audio download failure for a video: that video's row marks `status = error` (existing per-video error handling in `_run_download`); `has_audio` is not set. Transcript may still succeed independently.
 - Saving a favorite for a single-video URL: rejected client-side (button disabled) and defensively server-side (reject `source_type == 'video'`).
 - Re-saving an existing URL: upsert, not error.
+- Open in Finder on a missing/empty path: endpoint returns an error surfaced in the status chip; follows the existing `/api/pick-folder` subprocess pattern (run in executor, expanduser the path).
 
 ---
 
