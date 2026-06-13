@@ -277,7 +277,8 @@ def fetch_transcript_and_metadata(
             "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
         }
         if want_audio:
-            opts["format"] = "bestaudio/best"
+            # Highest-bitrate non-webm audio (e.g. m4a/AAC); never download webm.
+            opts["format"] = "bestaudio[ext!=webm]/best[ext!=webm]"
         if want_transcript:
             opts["writesubtitles"] = True
             opts["writeautomaticsub"] = True

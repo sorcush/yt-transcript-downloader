@@ -259,6 +259,25 @@ def test_fetch_retries_without_cookies_when_cookies_break_formats():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def test_audio_format_excludes_webm():
+    """Audio downloads must never select webm; prefer highest-bitrate non-webm."""
+    seen = []
+
+    def make_instance(opts):
+        seen.append(opts)
+        inst = MagicMock()
+        inst.__enter__.return_value.extract_info.return_value = {"id": "v", "title": "T"}
+        return inst
+
+    with patch("yt_dlp.YoutubeDL", side_effect=make_instance):
+        _, _, _, tmpdir = fetch_transcript_and_metadata(
+            "https://youtube.com/watch?v=v", ["title"],
+            want_transcript=False, want_audio=True,
+        )
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    assert seen[0]["format"] == "bestaudio[ext!=webm]/best[ext!=webm]"
+
+
 def test_fetch_does_not_retry_without_browser():
     """With no browser cookies configured, a failure should propagate (no retry)."""
     with patch("yt_dlp.YoutubeDL") as mock_cls:
