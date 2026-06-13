@@ -11,6 +11,10 @@ const state = {
   currentJobId: null,
   dateAbort: null,     // AbortController for in-flight /api/dates stream
   sort: { col: null, dir: 'asc' },
+  activeFavoriteId: null,
+  favorites: [],
+  downloadTranscript: true,
+  downloadAudio: false,
 };
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -31,6 +35,16 @@ const fetchedChip    = document.getElementById('fetched-chip');
 const datesChip      = document.getElementById('dates-chip');
 const datesChipText  = document.getElementById('dates-chip-text');
 const datesStopBtn   = document.getElementById('dates-stop-btn');
+const favoritesSelect = document.getElementById('favorites-select');
+const renameFavBtn   = document.getElementById('rename-fav-btn');
+const deleteFavBtn   = document.getElementById('delete-fav-btn');
+const saveFavBtn     = document.getElementById('save-fav-btn');
+const favNameInput   = document.getElementById('fav-name-input');
+const favNameConfirm = document.getElementById('fav-name-confirm');
+const openFolderBtn  = document.getElementById('open-folder-btn');
+const copyPathBtn    = document.getElementById('copy-path-btn');
+const dlTranscript   = document.getElementById('dl-transcript');
+const dlAudio        = document.getElementById('dl-audio');
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
@@ -46,6 +60,20 @@ async function init() {
   datesStopBtn.addEventListener('click', () => {
     if (state.dateAbort) state.dateAbort.abort();
   });
+  favoritesSelect.addEventListener('change', handleFavoritePick);
+  saveFavBtn.addEventListener('click', showSaveFavField);
+  favNameConfirm.addEventListener('click', handleSaveFavorite);
+  favNameInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleSaveFavorite(); });
+  renameFavBtn.addEventListener('click', handleRenameFavorite);
+  deleteFavBtn.addEventListener('click', handleDeleteFavorite);
+  urlInput.addEventListener('input', () => {
+    if (state.activeFavoriteId != null) { state.activeFavoriteId = null; renderFavoritesDropdown(); }
+  });
+  openFolderBtn.addEventListener('click', handleOpenFolder);
+  copyPathBtn.addEventListener('click', handleCopyPath);
+  dlTranscript.addEventListener('change', () => { state.downloadTranscript = dlTranscript.checked; updateSelectionUI(); });
+  dlAudio.addEventListener('change', () => { state.downloadAudio = dlAudio.checked; updateSelectionUI(); });
+  await loadFavorites();
   await loadFields();
 }
 
@@ -129,15 +157,18 @@ async function handleFetch() {
     });
     if (!res.ok) throw new Error(`Server error: ${res.status}`);
     const data = await res.json();
-    state.videos = data.videos;
+    state.videos = state.activeFavoriteId != null
+      ? mergeFavoriteVideos(data.videos)
+      : data.videos;
     state.channel = data.channel;
     state.playlistTitle = data.playlist_title;
     state.selectedIds.clear();
     renderTable();
-    fetchedChip.textContent = `✓ ${data.videos.length} fetched`;
+    fetchedChip.textContent = `✓ ${state.videos.length} fetched`;
     fetchedChip.classList.remove('error');
     fetchedChip.classList.add('visible');
-    fetchDatesLazy(data.videos);
+    if (state.activeFavoriteId != null) await persistActiveFavorite();
+    fetchDatesLazy(state.videos);
   } catch (err) {
     setStatus(`Error: ${err.message}`, true);
   } finally {
@@ -196,6 +227,7 @@ function renderTable() {
   emptyState.classList.add('hidden');
   videoTable.classList.remove('hidden');
   bottomBar.classList.remove('hidden');
+  saveFavBtn.disabled = !(state.playlistTitle || state.channel);
   updateSortHeaders();
 
   for (const video of sortedVideos()) {
@@ -224,6 +256,7 @@ function renderTable() {
     const durTd     = makeTd(formatDuration(video.duration), 'col-duration muted');
     const statusTd  = document.createElement('td');
     statusTd.className = 'col-status';
+    renderBadges(statusTd, video.has_transcript, video.has_audio);
 
     tr.appendChild(checkTd);
     tr.appendChild(titleTd);
@@ -275,7 +308,7 @@ function handleSelectAll() {
 function updateSelectionUI() {
   const count = state.selectedIds.size;
   selectionCount.textContent = `${count} selected`;
-  downloadBtn.disabled = count === 0;
+  downloadBtn.disabled = count === 0 || (!state.downloadTranscript && !state.downloadAudio);
   selectAll.checked = count > 0 && count === state.videos.length;
   selectAll.indeterminate = count > 0 && count < state.videos.length;
 }
@@ -322,6 +355,9 @@ async function handleDownload() {
         fields: [...state.selectedFields],
         output_folder: folder,
         cookies_browser: browserSelect.value || null,
+        download_transcript: state.downloadTranscript,
+        download_audio: state.downloadAudio,
+        favorite_id: state.activeFavoriteId,
       }),
     });
     if (!res.ok) throw new Error(`Server error: ${res.status}`);
@@ -346,6 +382,13 @@ async function pollProgress(jobId) {
 
     for (const v of data.videos) {
       setRowStatus(v.video_id, v.status, v.error);
+      if (v.status === 'done') {
+        const video = state.videos.find(x => x.video_id === v.video_id);
+        if (video) {
+          if (state.downloadTranscript) video.has_transcript = true;
+          if (state.downloadAudio) video.has_audio = true;
+        }
+      }
     }
 
     const total    = data.videos.length;
@@ -419,6 +462,7 @@ async function fetchDatesLazy(videos) {
     if (err.name !== 'AbortError') console.error('Date fetch error:', err);
   } finally {
     datesChip.classList.remove('visible');
+    if (state.activeFavoriteId != null) persistActiveFavorite();
   }
 }
 
@@ -437,12 +481,217 @@ function setRowStatus(videoId, status, errorMsg) {
   const statusTd = tr.querySelector('.col-status');
   if (!statusTd) return;
 
+  if (status === 'done') {
+    const video = state.videos.find(x => x.video_id === videoId);
+    renderBadges(statusTd, video && video.has_transcript, video && video.has_audio);
+    return;
+  }
+
   const labels = {
     pending:     'Pending',
     downloading: 'Downloading',
-    done:        'Done',
     error:       errorMsg ? `Error: ${errorMsg}` : 'Error',
   };
 
   statusTd.innerHTML = `<span class="status-badge status-${status}">${labels[status] || status}</span>`;
+}
+
+function renderBadges(td, hasTranscript, hasAudio) {
+  td.innerHTML = '';
+  if (hasTranscript) td.appendChild(makeBadge('T', 'badge-transcript'));
+  if (hasAudio) td.appendChild(makeBadge('A', 'badge-audio'));
+}
+
+function makeBadge(text, cls) {
+  const span = document.createElement('span');
+  span.className = `dl-badge ${cls}`;
+  span.textContent = text;
+  return span;
+}
+
+// ── Favorites ────────────────────────────────────────────────────────────────
+async function loadFavorites() {
+  try {
+    const res = await fetch('/api/favorites');
+    state.favorites = await res.json();
+    renderFavoritesDropdown();
+  } catch (err) {
+    console.error('Failed to load favorites:', err);
+  }
+}
+
+function renderFavoritesDropdown() {
+  favoritesSelect.innerHTML = '<option value="">★ Favorites…</option>';
+  for (const fav of state.favorites) {
+    const opt = document.createElement('option');
+    opt.value = String(fav.id);
+    opt.textContent = fav.name;
+    favoritesSelect.appendChild(opt);
+  }
+  favoritesSelect.value = state.activeFavoriteId ? String(state.activeFavoriteId) : '';
+  const hasActive = state.activeFavoriteId != null;
+  renameFavBtn.disabled = !hasActive;
+  deleteFavBtn.disabled = !hasActive;
+}
+
+async function handleFavoritePick() {
+  const id = favoritesSelect.value;
+  if (!id) {
+    state.activeFavoriteId = null;
+    renderFavoritesDropdown();
+    return;
+  }
+  state.activeFavoriteId = Number(id);
+  const res = await fetch(`/api/favorites/${id}`);
+  if (!res.ok) { setStatus('Failed to load favorite.', true); return; }
+  const fav = await res.json();
+  state.videos = fav.videos;
+  state.selectedIds.clear();
+  urlInput.value = fav.url;
+  if (fav.output_folder) outputFolder.value = fav.output_folder;
+  renderTable();
+  renderFavoritesDropdown();
+  setStatus(`Loaded "${fav.name}" (${fav.videos.length} videos)`);
+}
+
+function showSaveFavField() {
+  favNameInput.value = state.playlistTitle || state.channel || '';
+  favNameInput.classList.remove('hidden');
+  favNameConfirm.classList.remove('hidden');
+  favNameInput.focus();
+}
+
+function hideSaveFavField() {
+  favNameInput.classList.add('hidden');
+  favNameConfirm.classList.add('hidden');
+}
+
+async function handleSaveFavorite() {
+  const name = favNameInput.value.trim();
+  if (!name) { setStatus('Enter a name for the favorite.', true); return; }
+  const payload = {
+    url: urlInput.value.trim(),
+    name,
+    source_type: state.playlistTitle ? 'playlist' : 'channel',
+    output_folder: outputFolder.value.trim() || null,
+    videos: state.videos,
+  };
+  try {
+    const res = await fetch('/api/favorites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Server error: ${res.status}`);
+    }
+    const { id } = await res.json();
+    state.activeFavoriteId = id;
+    hideSaveFavField();
+    await loadFavorites();
+    setStatus(`Saved "${name}" to favorites.`);
+  } catch (err) {
+    setStatus(`Save failed: ${err.message}`, true);
+  }
+}
+
+async function handleRenameFavorite() {
+  if (state.activeFavoriteId == null) return;
+  const current = state.favorites.find(f => f.id === state.activeFavoriteId);
+  const name = prompt('Rename favorite:', current ? current.name : '');
+  if (!name || !name.trim()) return;
+  await fetch(`/api/favorites/${state.activeFavoriteId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  await loadFavorites();
+  setStatus(`Renamed to "${name.trim()}".`);
+}
+
+async function handleDeleteFavorite() {
+  if (state.activeFavoriteId == null) return;
+  const current = state.favorites.find(f => f.id === state.activeFavoriteId);
+  if (!confirm(`Delete favorite "${current ? current.name : ''}"?`)) return;
+  await fetch(`/api/favorites/${state.activeFavoriteId}`, { method: 'DELETE' });
+  state.activeFavoriteId = null;
+  await loadFavorites();
+  setStatus('Favorite deleted.');
+}
+
+// Merge a fresh fetch into the active favorite's saved videos: preserve
+// download badges + known dates for existing videos, and keep videos that
+// dropped out of the playlist.
+function mergeFavoriteVideos(fetched) {
+  const existing = new Map(state.videos.map(v => [v.video_id, v]));
+  const seen = new Set();
+  const merged = [];
+  for (const f of fetched) {
+    const prev = existing.get(f.video_id);
+    merged.push({
+      ...f,
+      upload_date: f.upload_date || (prev && prev.upload_date) || null,
+      has_transcript: prev ? prev.has_transcript : false,
+      has_audio: prev ? prev.has_audio : false,
+    });
+    seen.add(f.video_id);
+  }
+  for (const v of state.videos) {
+    if (!seen.has(v.video_id)) merged.push(v);  // kept: removed from playlist
+  }
+  return merged;
+}
+
+// Upsert the current video list into the active favorite (preserves flags
+// server-side; updates dates as they fill in).
+async function persistActiveFavorite() {
+  if (state.activeFavoriteId == null) return;
+  const fav = state.favorites.find(f => f.id === state.activeFavoriteId);
+  if (!fav) return;
+  try {
+    await fetch('/api/favorites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: fav.url,
+        name: fav.name,
+        source_type: fav.source_type,
+        output_folder: outputFolder.value.trim() || null,
+        videos: state.videos,
+      }),
+    });
+  } catch (err) {
+    console.error('Failed to persist favorite:', err);
+  }
+}
+
+// ── Output folder actions ────────────────────────────────────────────────────
+async function handleOpenFolder() {
+  const folder = outputFolder.value.trim();
+  if (!folder) { setStatus('No output folder to open.', true); return; }
+  try {
+    const res = await fetch('/api/open-folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Server error: ${res.status}`);
+    }
+  } catch (err) {
+    setStatus(`Open failed: ${err.message}`, true);
+  }
+}
+
+async function handleCopyPath() {
+  const folder = outputFolder.value.trim();
+  if (!folder) { setStatus('No output folder to copy.', true); return; }
+  try {
+    await navigator.clipboard.writeText(folder);
+    setStatus('Path copied to clipboard.');
+  } catch {
+    setStatus('Copy failed (clipboard unavailable).', true);
+  }
 }
