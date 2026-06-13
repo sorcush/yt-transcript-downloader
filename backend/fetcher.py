@@ -153,6 +153,14 @@ def _read_transcript(tmpdir: str, video_id: str) -> str:
     return " ".join(parts)
 
 
+def _find_audio(tmpdir: str, video_id: str) -> str | None:
+    """Return the path to the downloaded audio file (any non-json3 file for this id)."""
+    for path in Path(tmpdir).glob(f"{video_id}.*"):
+        if path.suffix != ".json3":
+            return str(path)
+    return None
+
+
 def _original_lang_from_captions(info: dict) -> str | None:
     """Detect original language from automatic_captions by finding entries
     whose subtitle URL has no tlang= parameter (i.e. not auto-translated)."""
@@ -174,43 +182,56 @@ def _probe_language(url: str, browser: str | None) -> str:
 
 
 def fetch_transcript_and_metadata(
-    url: str, fields: list[str], browser: str | None = None
-) -> tuple[dict, str]:
-    """Fetch metadata and plain-text transcript for a single video URL.
+    url: str,
+    fields: list[str],
+    browser: str | None = None,
+    want_transcript: bool = True,
+    want_audio: bool = False,
+) -> tuple[dict, str | None, str | None, str]:
+    """Fetch metadata, and optionally transcript text and/or original audio.
 
-    Downloads subtitle files to a temp directory (video itself is skipped).
-    Returns (metadata_dict, transcript_text).
+    Downloads artifacts into a temp directory the caller is responsible for
+    removing. Returns (metadata, transcript_or_None, audio_path_or_None, tmpdir).
+    audio_path (if present) lives inside tmpdir until the caller moves it.
     """
-    lang = _probe_language(url, browser)
-    # For English, include regional variants; for other languages, just that code.
-    if lang.startswith("en"):
-        sub_langs = ["en", "en-US", "en-GB"]
-    else:
-        sub_langs = [lang]
+    tmpdir = tempfile.mkdtemp()
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        ydl_opts = {
-            "logger": _SilentLogger(), "quiet": True,
-            "ignore_no_formats_error": True,
-            "writesubtitles": True,
-            "writeautomaticsub": True,
-            "subtitleslangs": sub_langs,
-            "subtitlesformat": "json3",
-            "skip_download": True,
-            "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
-        }
-        _add_cookies(ydl_opts, browser)
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+    sub_langs: list[str] | None = None
+    if want_transcript:
+        lang = _probe_language(url, browser)
+        if lang.startswith("en"):
+            sub_langs = ["en", "en-US", "en-GB"]
+        else:
+            sub_langs = [lang]
 
-        metadata: dict = {}
-        for field in fields:
-            value = info.get(field)
-            if field == "upload_date" and value:
-                value = _format_date(value)
-            metadata[field] = value
+    ydl_opts: dict = {
+        "logger": _SilentLogger(),
+        "quiet": True,
+        "ignore_no_formats_error": True,
+        "skip_download": not want_audio,
+        "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
+    }
+    if want_audio:
+        ydl_opts["format"] = "bestaudio/best"
+    if want_transcript:
+        ydl_opts["writesubtitles"] = True
+        ydl_opts["writeautomaticsub"] = True
+        ydl_opts["subtitleslangs"] = sub_langs
+        ydl_opts["subtitlesformat"] = "json3"
+    _add_cookies(ydl_opts, browser)
 
-        video_id = info.get("id", "")
-        transcript = _read_transcript(tmpdir, video_id)
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
 
-    return metadata, transcript
+    metadata: dict = {}
+    for field in fields:
+        value = info.get(field)
+        if field == "upload_date" and value:
+            value = _format_date(value)
+        metadata[field] = value
+
+    video_id = info.get("id", "")
+    transcript = _read_transcript(tmpdir, video_id) if want_transcript else None
+    audio_path = _find_audio(tmpdir, video_id) if want_audio else None
+
+    return metadata, transcript, audio_path, tmpdir

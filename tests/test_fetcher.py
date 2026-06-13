@@ -101,8 +101,9 @@ def test_list_videos_playlist_sorted_oldest_first():
 
 
 import json
+import shutil
 import tempfile
-from backend.fetcher import _read_transcript, fetch_transcript_and_metadata
+from backend.fetcher import _find_audio, _read_transcript, fetch_transcript_and_metadata
 
 
 def test_read_transcript_parses_json3():
@@ -144,6 +145,17 @@ def test_read_transcript_skips_empty_segments():
     assert result == "Hello World"
 
 
+def test_find_audio_ignores_subtitle_files(tmp_path):
+    (tmp_path / "vid.en.json3").write_text("{}")
+    (tmp_path / "vid.m4a").write_bytes(b"a")
+    assert _find_audio(str(tmp_path), "vid") == str(tmp_path / "vid.m4a")
+
+
+def test_find_audio_returns_none_when_absent(tmp_path):
+    (tmp_path / "vid.en.json3").write_text("{}")
+    assert _find_audio(str(tmp_path), "vid") is None
+
+
 def test_fetch_transcript_and_metadata_formats_date():
     mock_info = {
         "id": "abc123",
@@ -157,12 +169,16 @@ def test_fetch_transcript_and_metadata_formats_date():
         mock_ydl.extract_info.return_value = mock_info
         mock_cls.return_value.__enter__.return_value = mock_ydl
 
-        metadata, transcript = fetch_transcript_and_metadata(
+        metadata, transcript, audio_path, tmpdir = fetch_transcript_and_metadata(
             "https://youtube.com/watch?v=abc123",
             ["title", "upload_date", "channel"]
         )
 
-    assert metadata["title"] == "My Video"
-    assert metadata["upload_date"] == "2024-01-15"
-    assert metadata["channel"] == "Test Channel"
-    assert transcript == "No transcript available"   # no subtitle file in mock
+    try:
+        assert metadata["title"] == "My Video"
+        assert metadata["upload_date"] == "2024-01-15"
+        assert metadata["channel"] == "Test Channel"
+        assert transcript == "No transcript available"   # no subtitle file in mock
+        assert audio_path is None
+    finally:
+        shutil.rmtree(tmpdir)
