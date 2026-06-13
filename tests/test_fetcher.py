@@ -1,5 +1,6 @@
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+import pytest
 import backend.fetcher as fetcher
 from backend.fetcher import list_videos, _format_date, iter_dates
 
@@ -226,3 +227,49 @@ def test_fetch_transcript_and_metadata_formats_date():
         assert audio_path is None
     finally:
         shutil.rmtree(tmpdir)
+
+
+def test_fetch_retries_without_cookies_when_cookies_break_formats():
+    """Browser cookies can make YouTube withhold formats for public videos. The
+    first (cookied) extraction failing should trigger an anonymous retry."""
+    seen_opts = []
+
+    def make_instance(opts):
+        seen_opts.append(opts)
+        inst = MagicMock()
+        ydl = inst.__enter__.return_value
+        if "cookiesfrombrowser" in opts:
+            ydl.extract_info.side_effect = Exception("Requested format is not available")
+        else:
+            ydl.extract_info.return_value = {"id": "vid", "title": "T", "upload_date": "20240101"}
+        return inst
+
+    with patch("yt_dlp.YoutubeDL", side_effect=make_instance):
+        metadata, transcript, audio_path, tmpdir = fetch_transcript_and_metadata(
+            "https://youtube.com/watch?v=vid", ["title"],
+            browser="chrome", want_transcript=False, want_audio=True,
+        )
+
+    try:
+        assert metadata["title"] == "T"
+        # Tried with cookies, then retried without.
+        assert any("cookiesfrombrowser" in o for o in seen_opts)
+        assert any("cookiesfrombrowser" not in o for o in seen_opts)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_fetch_does_not_retry_without_browser():
+    """With no browser cookies configured, a failure should propagate (no retry)."""
+    with patch("yt_dlp.YoutubeDL") as mock_cls:
+        mock_cls.return_value.__enter__.return_value.extract_info.side_effect = Exception("boom")
+        try:
+            with pytest.raises(Exception):
+                fetch_transcript_and_metadata(
+                    "https://youtube.com/watch?v=vid", ["title"],
+                    want_transcript=False, want_audio=True,
+                )
+        finally:
+            pass
+    # Exactly one construction attempt (no anonymous retry).
+    assert mock_cls.call_count == 1

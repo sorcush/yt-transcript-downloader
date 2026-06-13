@@ -267,24 +267,37 @@ def fetch_transcript_and_metadata(
         else:
             sub_langs = [lang]
 
-    ydl_opts: dict = {
-        "logger": _SilentLogger(),
-        "quiet": True,
-        "ignore_no_formats_error": True,
-        "skip_download": not want_audio,
-        "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
-    }
-    if want_audio:
-        ydl_opts["format"] = "bestaudio/best"
-    if want_transcript:
-        ydl_opts["writesubtitles"] = True
-        ydl_opts["writeautomaticsub"] = True
-        ydl_opts["subtitleslangs"] = sub_langs
-        ydl_opts["subtitlesformat"] = "json3"
-    _add_cookies(ydl_opts, browser)
+    def _build_opts(use_browser: bool) -> dict:
+        opts: dict = {
+            "logger": _SilentLogger(),
+            "quiet": True,
+            "no_color": True,
+            "ignore_no_formats_error": True,
+            "skip_download": not want_audio,
+            "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
+        }
+        if want_audio:
+            opts["format"] = "bestaudio/best"
+        if want_transcript:
+            opts["writesubtitles"] = True
+            opts["writeautomaticsub"] = True
+            opts["subtitleslangs"] = sub_langs
+            opts["subtitlesformat"] = "json3"
+        if use_browser:
+            _add_cookies(opts, browser)
+        return opts
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+    try:
+        with yt_dlp.YoutubeDL(_build_opts(bool(browser))) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except Exception:
+        # Passing browser cookies can make YouTube withhold playable formats for
+        # otherwise-public videos ("No video formats found" / "Requested format
+        # is not available"). Retry once anonymously before giving up.
+        if not browser:
+            raise
+        with yt_dlp.YoutubeDL(_build_opts(False)) as ydl:
+            info = ydl.extract_info(url, download=True)
 
     metadata: dict = {}
     for field in fields:
