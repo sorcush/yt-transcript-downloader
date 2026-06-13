@@ -1,6 +1,6 @@
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from backend.fetcher import list_videos, _format_date
+from backend.fetcher import list_videos, _format_date, iter_dates
 
 
 def test_format_date_converts_yyyymmdd():
@@ -13,6 +13,39 @@ def test_format_date_handles_none():
 
 def test_format_date_handles_short_string():
     assert _format_date("bad") is None
+
+
+def test_iter_dates_returns_all_results_parallel():
+    infos = {
+        "https://youtube.com/watch?v=v1": {"upload_date": "20240101"},
+        "https://youtube.com/watch?v=v2": {"upload_date": "20240202"},
+        "https://youtube.com/watch?v=v3": {"upload_date": None},
+    }
+
+    def fake_extract(url, download=False):
+        return infos[url]
+
+    with patch("yt_dlp.YoutubeDL") as mock_cls:
+        inst = mock_cls.return_value.__enter__.return_value
+        inst.extract_info.side_effect = fake_extract
+        videos = [("v1", "https://youtube.com/watch?v=v1"),
+                  ("v2", "https://youtube.com/watch?v=v2"),
+                  ("v3", "https://youtube.com/watch?v=v3")]
+        results = dict(iter_dates(videos))
+
+    assert results == {"v1": "2024-01-01", "v2": "2024-02-02", "v3": None}
+
+
+def test_iter_dates_failure_yields_none():
+    def boom(url, download=False):
+        raise RuntimeError("network down")
+
+    with patch("yt_dlp.YoutubeDL") as mock_cls:
+        inst = mock_cls.return_value.__enter__.return_value
+        inst.extract_info.side_effect = boom
+        results = dict(iter_dates([("v1", "https://youtube.com/watch?v=v1")]))
+
+    assert results == {"v1": None}
 
 
 def _make_ydl_mock(info):

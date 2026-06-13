@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import yt_dlp
@@ -15,6 +16,9 @@ AVAILABLE_FIELDS: list[str] = [
     "playlist", "playlist_id", "playlist_title", "playlist_uploader",
     "is_live", "was_live", "age_limit",
 ]
+
+# Number of concurrent workers for per-video date extraction.
+DATE_FETCH_WORKERS = 8
 
 
 def _format_date(date_str: str | None) -> str | None:
@@ -46,20 +50,31 @@ def fetch_date(url: str, browser: str | None = None) -> str | None:
         return _format_date(info.get("upload_date"))
 
 
+def _fetch_one_date(vid_id: str, url: str, browser: str | None):
+    """Extract a single video's upload date in its own YoutubeDL instance."""
+    opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
+    _add_cookies(opts, browser)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return vid_id, _format_date(info.get("upload_date"))
+    except Exception:
+        return vid_id, None
+
+
 def iter_dates(
     videos: list[tuple[str, str]], browser: str | None = None
 ):
-    """Yield (video_id, date) reusing a single YoutubeDL instance + cookiejar."""
-    opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
-    _add_cookies(opts, browser)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        for vid_id, url in videos:
-            try:
-                info = ydl.extract_info(url, download=False)
-                date = _format_date(info.get("upload_date"))
-            except Exception:
-                date = None
-            yield vid_id, date
+    """Yield (video_id, date) for each video, extracting concurrently.
+
+    A separate YoutubeDL instance is used per video (the instance is not
+    safe to share across threads). Results are yielded as they complete,
+    so order is not guaranteed; callers key results by video_id.
+    """
+    with ThreadPoolExecutor(max_workers=DATE_FETCH_WORKERS) as executor:
+        futures = [executor.submit(_fetch_one_date, vid_id, url, browser) for vid_id, url in videos]
+        for future in as_completed(futures):
+            yield future.result()
 
 
 def get_available_fields() -> list[str]:
