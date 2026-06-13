@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -50,65 +51,41 @@ def fetch_date(url: str, browser: str | None = None) -> str | None:
         return _format_date(info.get("upload_date"))
 
 
-def _export_browser_cookies(browser: str) -> str | None:
-    """Load cookies from the browser ONCE and write them to a temp Netscape
-    cookie file, returning its path.
-
-    Reading that file per worker is cheap. Re-decrypting the browser's cookie
-    store for every video — and doing so from many threads at once — is what
-    made parallel extraction slower than the old serial (single-instance) path.
-    """
-    try:
-        ydl = yt_dlp.YoutubeDL({
-            "logger": _SilentLogger(),
-            "quiet": True,
-            "cookiesfrombrowser": (browser,),
-        })
-        fd, path = tempfile.mkstemp(suffix=".cookies.txt")
-        os.close(fd)
-        ydl.cookiejar.save(path, ignore_discard=True, ignore_expires=True)
-        return path
-    except Exception:
-        return None
-
-
-def _fetch_one_date(vid_id: str, url: str, cookiefile: str | None):
-    """Extract a single video's upload date in its own YoutubeDL instance,
-    reusing a shared cookie file so no per-video browser decrypt is needed."""
-    opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
-    if cookiefile:
-        opts["cookiefile"] = cookiefile
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            return vid_id, _format_date(info.get("upload_date"))
-    except Exception:
-        return vid_id, None
-
-
 def iter_dates(
     videos: list[tuple[str, str]], browser: str | None = None
 ):
     """Yield (video_id, date) for each video, extracting concurrently.
 
-    Browser cookies (if any) are loaded once up front and shared with every
-    worker via a temp cookie file, so concurrent workers don't each re-decrypt
-    the browser's cookie store. A separate YoutubeDL instance is used per video
-    (the instance is not safe to share across threads). Results are yielded as
-    they complete, so order is not guaranteed; callers key results by video_id.
+    Each worker thread builds ONE YoutubeDL instance and reuses it for every
+    video it handles, so the browser cookie store is decrypted at most once per
+    worker (~DATE_FETCH_WORKERS times) rather than once per video. Instances are
+    never shared across threads, and no cookie file is used — yt-dlp writes the
+    cookiejar back to a `cookiefile` on close, so a shared file would be
+    corrupted by concurrent writers. Results are yielded as they complete, so
+    order is not guaranteed; callers key results by video_id.
     """
-    cookiefile = _export_browser_cookies(browser) if browser else None
-    try:
-        with ThreadPoolExecutor(max_workers=DATE_FETCH_WORKERS) as executor:
-            futures = [executor.submit(_fetch_one_date, vid_id, url, cookiefile) for vid_id, url in videos]
-            for future in as_completed(futures):
-                yield future.result()
-    finally:
-        if cookiefile:
-            try:
-                os.remove(cookiefile)
-            except OSError:
-                pass
+    local = threading.local()
+
+    def _thread_ydl() -> "yt_dlp.YoutubeDL":
+        ydl = getattr(local, "ydl", None)
+        if ydl is None:
+            opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
+            _add_cookies(opts, browser)
+            ydl = yt_dlp.YoutubeDL(opts)
+            local.ydl = ydl
+        return ydl
+
+    def _fetch_one(vid_id: str, url: str):
+        try:
+            info = _thread_ydl().extract_info(url, download=False)
+            return vid_id, _format_date(info.get("upload_date"))
+        except Exception:
+            return vid_id, None
+
+    with ThreadPoolExecutor(max_workers=DATE_FETCH_WORKERS) as executor:
+        futures = [executor.submit(_fetch_one, vid_id, url) for vid_id, url in videos]
+        for future in as_completed(futures):
+            yield future.result()
 
 
 def get_available_fields() -> list[str]:

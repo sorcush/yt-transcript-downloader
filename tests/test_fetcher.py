@@ -1,5 +1,6 @@
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+import backend.fetcher as fetcher
 from backend.fetcher import list_videos, _format_date, iter_dates
 
 
@@ -26,8 +27,7 @@ def test_iter_dates_returns_all_results_parallel():
         return infos[url]
 
     with patch("yt_dlp.YoutubeDL") as mock_cls:
-        inst = mock_cls.return_value.__enter__.return_value
-        inst.extract_info.side_effect = fake_extract
+        mock_cls.return_value.extract_info.side_effect = fake_extract
         videos = [("v1", "https://youtube.com/watch?v=v1"),
                   ("v2", "https://youtube.com/watch?v=v2"),
                   ("v3", "https://youtube.com/watch?v=v3")]
@@ -41,31 +41,29 @@ def test_iter_dates_failure_yields_none():
         raise RuntimeError("network down")
 
     with patch("yt_dlp.YoutubeDL") as mock_cls:
-        inst = mock_cls.return_value.__enter__.return_value
-        inst.extract_info.side_effect = boom
+        mock_cls.return_value.extract_info.side_effect = boom
         results = dict(iter_dates([("v1", "https://youtube.com/watch?v=v1")]))
 
     assert results == {"v1": None}
 
 
-def test_iter_dates_loads_browser_cookies_once_and_shares_them():
-    """With a browser selected, cookies must be decrypted ONCE and shared via a
-    cookie file — never re-decrypted per worker (the cause of the slowdown)."""
-    with patch("backend.fetcher._export_browser_cookies", return_value="/tmp/c.txt") as mock_export:
-        with patch("yt_dlp.YoutubeDL") as mock_cls:
-            inst = mock_cls.return_value.__enter__.return_value
-            inst.extract_info.return_value = {"upload_date": "20240101"}
-            videos = [("v1", "u1"), ("v2", "u2"), ("v3", "u3")]
-            results = dict(iter_dates(videos, browser="chrome"))
+def test_iter_dates_reuses_instance_per_thread_with_browser_cookies():
+    """Cookies are loaded via cookiesfrombrowser on a per-thread instance that is
+    reused across videos — so the browser store is decrypted at most once per
+    worker (not once per video), and no shared cookie file is written."""
+    with patch("yt_dlp.YoutubeDL") as mock_cls:
+        mock_cls.return_value.extract_info.return_value = {"upload_date": "20240101"}
+        videos = [(f"v{i}", f"u{i}") for i in range(40)]
+        results = dict(iter_dates(videos, browser="chrome"))
 
-    assert results == {"v1": "2024-01-01", "v2": "2024-01-01", "v3": "2024-01-01"}
-    mock_export.assert_called_once_with("chrome")
-    # Every worker instance uses the shared cookie file, none re-decrypts the browser.
-    worker_opts = [call.args[0] for call in mock_cls.call_args_list]
-    assert len(worker_opts) == 3
-    for opts in worker_opts:
-        assert opts.get("cookiefile") == "/tmp/c.txt"
-        assert "cookiesfrombrowser" not in opts
+    assert len(results) == 40
+    assert all(d == "2024-01-01" for d in results.values())
+    # Far fewer instances than videos — at most one per worker thread.
+    assert mock_cls.call_count <= fetcher.DATE_FETCH_WORKERS
+    for call in mock_cls.call_args_list:
+        opts = call.args[0]
+        assert opts.get("cookiesfrombrowser") == ("chrome",)
+        assert "cookiefile" not in opts
 
 
 def _make_ydl_mock(info):
