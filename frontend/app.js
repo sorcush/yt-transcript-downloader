@@ -438,14 +438,14 @@ async function pollProgress(jobId) {
 
     for (const v of data.videos) {
       // Update the badge flags BEFORE rendering status, since setRowStatus reads
-      // them to draw the T/A badges for a done row. Set them to exactly this
-      // download's selection (re-download reconciles the folder, so badges must
-      // match rather than accumulate).
+      // them to draw the T/A badges for a done row. Only update the flag for a
+      // type that was part of this download; leave the other type's badge as-is
+      // so an audio-only (or transcript-only) re-download doesn't clear it.
       if (v.status === 'done') {
         const video = state.videos.find(x => x.video_id === v.video_id);
         if (video) {
-          video.has_transcript = state.downloadTranscript;
-          video.has_audio = state.downloadAudio;
+          if (state.downloadTranscript) video.has_transcript = true;
+          if (state.downloadAudio) video.has_audio = true;
         }
       }
       setRowStatus(v.video_id, v.status, v.error);
@@ -467,6 +467,9 @@ async function pollProgress(jobId) {
     if (data.status === 'done' || data.status === 'cancelled') {
       clearInterval(state.pollTimer);
       state.pollTimer = null;
+      // Persist the favorite's current state (updated badges + the list being
+      // worked on) so a finished download is never lost on reload.
+      if (state.activeFavoriteId != null) persistActiveFavorite();
       const cancelledCount = data.videos.filter(v => v.status === 'cancelled').length;
       let msg;
       if (data.status === 'cancelled') {
@@ -719,7 +722,7 @@ async function persistActiveFavorite() {
   const fav = state.favorites.find(f => f.id === state.activeFavoriteId);
   if (!fav) return;
   try {
-    await fetch('/api/favorites', {
+    const res = await fetch('/api/favorites', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -730,8 +733,16 @@ async function persistActiveFavorite() {
         videos: state.videos,
       }),
     });
+    // fetch() does not throw on 4xx/5xx — check explicitly so a failed save
+    // (e.g. a video with a bad field) is surfaced instead of silently dropping
+    // the working list, which made it look like the favorite "disappeared".
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Server error: ${res.status}`);
+    }
   } catch (err) {
     console.error('Failed to persist favorite:', err);
+    setStatus(`Could not save favorite changes: ${err.message}`, true);
   }
 }
 

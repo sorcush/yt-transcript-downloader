@@ -145,6 +145,24 @@ def test_list_videos_playlist_sorted_oldest_first():
     assert result["videos"][1]["video_id"] == "v2"
 
 
+def test_list_videos_coerces_null_title_to_unknown():
+    # Deleted/private/unavailable flat entries carry title=None (key present).
+    # It must become a non-null string, or the required VideoInfo.title 422s the
+    # whole favorite save and the working list silently disappears.
+    mock_info = {
+        "_type": "playlist",
+        "playlist_title": "P",
+        "entries": [
+            {"id": "v1", "title": None, "url": "https://youtube.com/watch?v=v1"},
+        ],
+    }
+    with patch("yt_dlp.YoutubeDL") as mock_cls:
+        mock_cls.return_value.__enter__.return_value = _make_ydl_mock(mock_info)
+        result = list_videos("https://www.youtube.com/playlist?list=PLxxx")
+
+    assert result["videos"][0]["title"] == "Unknown"
+
+
 import json
 import shutil
 import tempfile

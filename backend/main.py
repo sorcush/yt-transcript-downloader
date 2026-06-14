@@ -289,15 +289,26 @@ async def _run_download(job_id: str, request: DownloadRequest) -> None:
                 metadata.get("upload_date") or "unknown-date",
                 title,
             )
-            # Reconcile the folder to exactly this download (overwrite + remove stale).
-            write_video_files(folder, metadata, transcript)
-            place_audio(folder, audio_path)
+            # Reconcile the folder to this download (overwrite + remove stale),
+            # but only for the file types actually requested so a later
+            # audio-only (or transcript-only) download won't wipe the other.
+            write_video_files(
+                folder, metadata, transcript, request.download_transcript
+            )
+            place_audio(folder, audio_path, request.download_audio)
             if request.favorite_id is not None:
                 store.mark_downloaded(
                     request.favorite_id, video_id,
-                    has_transcript=request.download_transcript and transcript is not None,
-                    has_audio=audio_path is not None,
+                    # None for a type not requested this run -> leave its badge
+                    # alone so a later audio-only (or transcript-only) download
+                    # doesn't clear the other type's badge.
+                    has_transcript=(transcript is not None)
+                    if request.download_transcript else None,
+                    has_audio=(audio_path is not None)
+                    if request.download_audio else None,
                     metadata=metadata,
+                    url=url,
+                    title=title,
                 )
                 store.set_output_folder(request.favorite_id, request.output_folder)
             _jobs[job_id]["videos"][video_id]["status"] = "done"

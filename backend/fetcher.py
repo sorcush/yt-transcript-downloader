@@ -55,6 +55,22 @@ def _add_cookies(opts: dict, browser: str | None) -> None:
         opts["cookiesfrombrowser"] = (browser,)
 
 
+# Recent yt-dlp needs a JavaScript runtime plus the EJS challenge-solver script
+# to decode YouTube's "n challenge". Without them YouTube withholds every real
+# audio/video format and extraction fails with "No video formats found!" (seen
+# e.g. on age-restricted videos, which also require cookies). Enable the bundled
+# deno default and node (commonly already installed); yt-dlp picks whichever is
+# present and fetches the solver script on demand.
+_JS_RUNTIMES = {"deno": {"path": None}, "node": {"path": None}}
+_REMOTE_COMPONENTS = ["ejs:github"]
+
+
+def _add_js_runtime(opts: dict) -> None:
+    """Mutate opts in-place to enable JS-challenge solving (see _JS_RUNTIMES)."""
+    opts["js_runtimes"] = _JS_RUNTIMES
+    opts["remote_components"] = _REMOTE_COMPONENTS
+
+
 def fetch_date(url: str, browser: str | None = None) -> str | None:
     """Fetch just the upload_date for a single video URL (full extraction)."""
     opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
@@ -173,7 +189,10 @@ def list_videos(url: str, browser: str | None = None) -> dict:
         vid_id = entry.get("id", "")
         videos.append({
             "video_id": vid_id,
-            "title": entry.get("title", "Unknown"),
+            # `or` (not dict default): deleted/private/unavailable flat entries
+            # carry title=None (key present), which would otherwise fail the
+            # required VideoInfo.title and 422 the whole favorite save.
+            "title": entry.get("title") or "Unknown",
             "upload_date": _format_date(entry.get("upload_date")),
             "channel": entry.get("channel") or entry.get("uploader") or channel,
             "duration": entry.get("duration"),
@@ -286,6 +305,7 @@ def fetch_transcript_and_metadata(
             opts["subtitlesformat"] = "json3"
         if use_browser:
             _add_cookies(opts, browser)
+        _add_js_runtime(opts)
         return opts
 
     try:

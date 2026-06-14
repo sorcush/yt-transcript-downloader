@@ -125,24 +125,41 @@ def delete_favorite(fav_id: int) -> None:
         conn.close()
 
 
-def mark_downloaded(fav_id: int, video_id: str, has_transcript: bool,
-                    has_audio: bool, metadata: dict) -> None:
-    """Record the result of a download, setting the flags to EXACTLY this
-    download's outcome. Re-downloading reconciles the folder to match the
-    current selection (stale files removed), so the badges must follow suit
-    rather than accumulate."""
+def mark_downloaded(fav_id: int, video_id: str, has_transcript: bool | None,
+                    has_audio: bool | None, metadata: dict,
+                    url: str | None = None, title: str | None = None) -> None:
+    """Record the result of a download. For each file type that was part of this
+    download, set its flag to the download's outcome (so re-downloading
+    reconciles the badge to the current selection rather than accumulating).
+    Pass None for a type that was NOT requested this run to leave its existing
+    flag untouched, so an audio-only download won't clear the transcript badge
+    (or vice versa).
+
+    The video row is created if it does not exist yet, so a download always
+    persists to the favorite even for a video that wasn't part of its saved list
+    (otherwise the bare UPDATE would silently affect 0 rows and the result would
+    be lost)."""
     conn = _connect()
     try:
+        # Ensure the row exists; never overwrites an existing row's list fields.
         conn.execute(
-            """
-            UPDATE video SET
-                has_transcript = ?,
-                has_audio      = ?,
-                metadata_json  = ?
-            WHERE favorite_id = ? AND video_id = ?
-            """,
-            (1 if has_transcript else 0, 1 if has_audio else 0,
-             json.dumps(metadata, ensure_ascii=False), fav_id, video_id),
+            "INSERT OR IGNORE INTO video (favorite_id, video_id, title, url) "
+            "VALUES (?, ?, ?, ?)",
+            (fav_id, video_id, title or metadata.get("title") or video_id, url),
+        )
+        sets = ["metadata_json = ?"]
+        params: list = [json.dumps(metadata, ensure_ascii=False)]
+        if has_transcript is not None:
+            sets.append("has_transcript = ?")
+            params.append(1 if has_transcript else 0)
+        if has_audio is not None:
+            sets.append("has_audio = ?")
+            params.append(1 if has_audio else 0)
+        params.extend([fav_id, video_id])
+        conn.execute(
+            f"UPDATE video SET {', '.join(sets)} "
+            "WHERE favorite_id = ? AND video_id = ?",
+            params,
         )
         conn.commit()
     finally:

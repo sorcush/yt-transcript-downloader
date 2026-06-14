@@ -71,6 +71,31 @@ def test_mark_downloaded_sets_exact_flags(db):
     assert v1["has_audio"] is True
 
 
+def test_mark_downloaded_keeps_unrequested_flag(db):
+    # A second download of a different type (None = not requested this run) must
+    # leave the other type's badge untouched.
+    fav_id = db.save_favorite("http://list", "L", "playlist", None, _videos())
+    db.mark_downloaded(fav_id, "v1", has_transcript=True, has_audio=None, metadata={})
+    db.mark_downloaded(fav_id, "v1", has_transcript=None, has_audio=True, metadata={})
+    fav = db.get_favorite(fav_id)
+    v1 = next(v for v in fav["videos"] if v["video_id"] == "v1")
+    assert v1["has_transcript"] is True   # preserved from the first download
+    assert v1["has_audio"] is True        # added by the second download
+
+
+def test_mark_downloaded_creates_missing_video_row(db):
+    # A download of a video not yet in the favorite's saved list must still
+    # persist (create the row) rather than silently affecting 0 rows.
+    fav_id = db.save_favorite("http://list", "L", "playlist", None, [])
+    db.mark_downloaded(fav_id, "vNew", has_transcript=True, has_audio=None,
+                       metadata={"title": "Fresh"}, url="uNew", title="Fresh")
+    fav = db.get_favorite(fav_id)
+    v = next(v for v in fav["videos"] if v["video_id"] == "vNew")
+    assert v["has_transcript"] is True
+    assert v["title"] == "Fresh"
+    assert v["url"] == "uNew"
+
+
 def test_upsert_videos_preserves_download_flags(db):
     fav_id = db.save_favorite("http://list", "L", "playlist", None, _videos())
     db.mark_downloaded(fav_id, "v1", has_transcript=True, has_audio=True, metadata={"a": 1})

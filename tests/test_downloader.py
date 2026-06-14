@@ -62,12 +62,23 @@ def test_write_video_files_writes_transcript_when_present():
         assert (folder / "transcript.txt").read_text(encoding="utf-8") == "hello world"
 
 
-def test_write_video_files_removes_stale_transcript():
+def test_write_video_files_removes_stale_transcript_when_requested_but_empty():
     with tempfile.TemporaryDirectory() as d:
         folder = Path(d)
         (folder / "transcript.txt").write_text("old transcript")
-        write_video_files(folder, {"title": "X"}, None)   # transcript not selected now
+        # transcript requested this run but none was produced -> reconcile
+        write_video_files(folder, {"title": "X"}, None, download_transcript=True)
         assert not (folder / "transcript.txt").exists()
+        assert (folder / "metadata.json").exists()
+
+
+def test_write_video_files_keeps_transcript_when_not_requested():
+    with tempfile.TemporaryDirectory() as d:
+        folder = Path(d)
+        (folder / "transcript.txt").write_text("from a prior download")
+        # audio-only run: transcript not requested -> leave existing one alone
+        write_video_files(folder, {"title": "X"}, None, download_transcript=False)
+        assert (folder / "transcript.txt").read_text() == "from a prior download"
         assert (folder / "metadata.json").exists()
 
 
@@ -95,9 +106,19 @@ def test_place_audio_replaces_stale_audio_of_other_ext():
         assert (folder / "audio.m4a").read_bytes() == b"new"
 
 
-def test_place_audio_removes_existing_when_no_new_audio():
+def test_place_audio_removes_existing_when_requested_but_no_new_audio():
     with tempfile.TemporaryDirectory() as d:
         folder = Path(d)
         (folder / "audio.m4a").write_bytes(b"old")
-        place_audio(folder, None)                      # audio not selected this time
+        # audio requested this run but none was produced -> reconcile
+        place_audio(folder, None, download_audio=True)
         assert not (folder / "audio.m4a").exists()
+
+
+def test_place_audio_keeps_existing_when_not_requested():
+    with tempfile.TemporaryDirectory() as d:
+        folder = Path(d)
+        (folder / "audio.m4a").write_bytes(b"from a prior download")
+        # transcript-only run: audio not requested -> leave existing one alone
+        place_audio(folder, None, download_audio=False)
+        assert (folder / "audio.m4a").read_bytes() == b"from a prior download"

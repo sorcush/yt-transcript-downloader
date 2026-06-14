@@ -22,6 +22,30 @@ def test_video_info_defaults():
     assert v.playlist_title is None
 
 
+def test_video_info_coerces_null_title():
+    v = VideoInfo(video_id="abc", title=None, url="https://youtube.com/watch?v=abc")
+    assert v.title == "Unknown"
+
+
+def test_video_info_reconstructs_missing_url_from_id():
+    v = VideoInfo(video_id="abc", title="T")
+    assert v.url == "https://www.youtube.com/watch?v=abc"
+
+
+def test_save_favorite_survives_one_malformed_video():
+    # One bad video must not 422 the whole batch (which silently wiped the list).
+    req = SaveFavoriteRequest(
+        url="http://list", name="L", source_type="playlist", output_folder=None,
+        videos=[
+            {"video_id": "v1", "title": "Good", "url": "u1"},
+            {"video_id": "v2", "title": None},  # deleted/private: no title, no url
+        ],
+    )
+    assert len(req.videos) == 2
+    assert req.videos[1].title == "Unknown"
+    assert req.videos[1].url == "https://www.youtube.com/watch?v=v2"
+
+
 def test_download_request_defaults():
     req = DownloadRequest(
         video_ids=["v1"], video_urls={"v1": "u1"}, fields=["title"],

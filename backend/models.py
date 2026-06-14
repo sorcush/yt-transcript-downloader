@@ -13,6 +13,21 @@ class VideoInfo(BaseModel):
     has_transcript: bool = False
     has_audio: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_required(cls, data):
+        """Make the required string fields resilient to bad scraped data so one
+        malformed video can never 422 a whole favorite save and silently wipe
+        the user's list. A null/missing title becomes "Unknown"; a null/missing
+        url is reconstructed from the video id."""
+        if not isinstance(data, dict):
+            return data
+        if not data.get("title"):
+            data["title"] = "Unknown"
+        if not data.get("url") and data.get("video_id"):
+            data["url"] = f"https://www.youtube.com/watch?v={data['video_id']}"
+        return data
+
 
 class FetchRequest(BaseModel):
     url: str
