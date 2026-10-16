@@ -49,10 +49,23 @@ class _SilentLogger:
     def error(self, msg): pass
 
 
-def _add_cookies(opts: dict, browser: str | None) -> None:
-    """Mutate opts in-place to add cookie source if browser is specified."""
+def _extract_info(opts: dict, url: str, browser: str | None, download: bool = False) -> dict:
+    """Run extract_info with the browser's cookies, retrying once anonymously.
+
+    Cookies can fail to load (e.g. macOS denies reading the browser's profile
+    folder: "could not find chrome cookies database"), and can also make YouTube
+    withhold playable formats for otherwise-public videos ("No video formats
+    found" / "Requested format is not available"). Either way, an anonymous
+    retry still works for public videos. Without a browser, errors propagate.
+    """
     if browser:
-        opts["cookiesfrombrowser"] = (browser,)
+        try:
+            with yt_dlp.YoutubeDL({**opts, "cookiesfrombrowser": (browser,)}) as ydl:
+                return ydl.extract_info(url, download=download)
+        except Exception:
+            pass
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.extract_info(url, download=download)
 
 
 # Recent yt-dlp needs a JavaScript runtime plus the EJS challenge-solver script
@@ -74,10 +87,8 @@ def _add_js_runtime(opts: dict) -> None:
 def fetch_date(url: str, browser: str | None = None) -> str | None:
     """Fetch just the upload_date for a single video URL (full extraction)."""
     opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
-    _add_cookies(opts, browser)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        return _format_date(info.get("upload_date"))
+    info = _extract_info(opts, url, browser)
+    return _format_date(info.get("upload_date"))
 
 
 def _export_browser_cookies(browser: str) -> str | None:
@@ -169,9 +180,7 @@ def list_videos(url: str, browser: str | None = None) -> dict:
         "ignore_no_formats_error": True,
         "extractor_args": {"youtube": {"lang": [""]}},
     }
-    _add_cookies(ydl_opts, browser)
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    info = _extract_info(ydl_opts, url, browser)
 
     if "entries" in info:
         entries = [e for e in info["entries"] if e]
@@ -257,9 +266,7 @@ def _original_lang_from_captions(info: dict) -> str | None:
 def _probe_language(url: str, browser: str | None) -> str:
     """Return the video's original language code, defaulting to 'en'."""
     opts = {"logger": _SilentLogger(), "quiet": True, "skip_download": True, "ignore_no_formats_error": True}
-    _add_cookies(opts, browser)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    info = _extract_info(opts, url, browser)
     return _original_lang_from_captions(info) or info.get("language") or "en"
 
 
@@ -286,39 +293,25 @@ def fetch_transcript_and_metadata(
         else:
             sub_langs = [lang]
 
-    def _build_opts(use_browser: bool) -> dict:
-        opts: dict = {
-            "logger": _SilentLogger(),
-            "quiet": True,
-            "no_color": True,
-            "ignore_no_formats_error": True,
-            "skip_download": not want_audio,
-            "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
-        }
-        if want_audio:
-            # Highest-bitrate non-webm audio (e.g. m4a/AAC); never download webm.
-            opts["format"] = "bestaudio[ext!=webm]/best[ext!=webm]"
-        if want_transcript:
-            opts["writesubtitles"] = True
-            opts["writeautomaticsub"] = True
-            opts["subtitleslangs"] = sub_langs
-            opts["subtitlesformat"] = "json3"
-        if use_browser:
-            _add_cookies(opts, browser)
-        _add_js_runtime(opts)
-        return opts
+    opts: dict = {
+        "logger": _SilentLogger(),
+        "quiet": True,
+        "no_color": True,
+        "ignore_no_formats_error": True,
+        "skip_download": not want_audio,
+        "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
+    }
+    if want_audio:
+        # Highest-bitrate non-webm audio (e.g. m4a/AAC); never download webm.
+        opts["format"] = "bestaudio[ext!=webm]/best[ext!=webm]"
+    if want_transcript:
+        opts["writesubtitles"] = True
+        opts["writeautomaticsub"] = True
+        opts["subtitleslangs"] = sub_langs
+        opts["subtitlesformat"] = "json3"
+    _add_js_runtime(opts)
 
-    try:
-        with yt_dlp.YoutubeDL(_build_opts(bool(browser))) as ydl:
-            info = ydl.extract_info(url, download=True)
-    except Exception:
-        # Passing browser cookies can make YouTube withhold playable formats for
-        # otherwise-public videos ("No video formats found" / "Requested format
-        # is not available"). Retry once anonymously before giving up.
-        if not browser:
-            raise
-        with yt_dlp.YoutubeDL(_build_opts(False)) as ydl:
-            info = ydl.extract_info(url, download=True)
+    info = _extract_info(opts, url, browser, download=True)
 
     metadata: dict = {}
     for field in fields:

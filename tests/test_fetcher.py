@@ -310,3 +310,64 @@ def test_fetch_does_not_retry_without_browser():
             pass
     # Exactly one construction attempt (no anonymous retry).
     assert mock_cls.call_count == 1
+
+
+def _cookies_fail_instance_factory(info, seen_opts):
+    """YoutubeDL stand-in: any instance given browser cookies fails (as when the
+    cookie database can't be read); anonymous instances return `info`."""
+    def make_instance(opts):
+        seen_opts.append(opts)
+        inst = MagicMock()
+        ydl = inst.__enter__.return_value
+        if "cookiesfrombrowser" in opts:
+            ydl.extract_info.side_effect = Exception(
+                'could not find chrome cookies database in "/x"')
+        else:
+            ydl.extract_info.return_value = info
+        return inst
+    return make_instance
+
+
+def test_list_videos_retries_without_cookies_when_cookies_fail():
+    seen = []
+    info = {"id": "v1", "title": "T", "channel": "C", "upload_date": "20240101"}
+    with patch("yt_dlp.YoutubeDL", side_effect=_cookies_fail_instance_factory(info, seen)):
+        result = list_videos("https://youtube.com/watch?v=v1", browser="chrome")
+
+    assert [v["video_id"] for v in result["videos"]] == ["v1"]
+    assert "cookiesfrombrowser" in seen[0]
+    assert "cookiesfrombrowser" not in seen[-1]
+
+
+def test_list_videos_does_not_retry_without_browser():
+    with patch("yt_dlp.YoutubeDL") as mock_cls:
+        mock_cls.return_value.__enter__.return_value.extract_info.side_effect = Exception("boom")
+        with pytest.raises(Exception):
+            list_videos("https://youtube.com/watch?v=v1")
+    assert mock_cls.call_count == 1
+
+
+def test_fetch_date_retries_without_cookies_when_cookies_fail():
+    seen = []
+    with patch("yt_dlp.YoutubeDL",
+               side_effect=_cookies_fail_instance_factory({"upload_date": "20240315"}, seen)):
+        assert fetcher.fetch_date("https://youtube.com/watch?v=v1", browser="chrome") == "2024-03-15"
+    assert "cookiesfrombrowser" not in seen[-1]
+
+
+def test_language_probe_retries_without_cookies_when_cookies_fail():
+    """The language probe runs before the download; a cookie failure there must
+    not abort the whole fetch."""
+    seen = []
+    info = {"id": "vid", "title": "T", "language": "de"}
+    with patch("yt_dlp.YoutubeDL", side_effect=_cookies_fail_instance_factory(info, seen)):
+        metadata, _, _, tmpdir = fetch_transcript_and_metadata(
+            "https://youtube.com/watch?v=vid", ["title"],
+            browser="chrome", want_transcript=True, want_audio=False,
+        )
+    try:
+        assert metadata["title"] == "T"
+        # Anonymous probe detected "de", so subtitles were requested in German.
+        assert seen[-1]["subtitleslangs"] == ["de"]
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
