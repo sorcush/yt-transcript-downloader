@@ -57,8 +57,8 @@ class DownloadRequest(BaseModel):
     fields: list[str]
     output_folder: str
     cookies_browser: Optional[str] = None
-    download_transcript: bool = True
-    download_audio: bool = False
+    download_transcript: bool = False
+    download_audio: bool = True
     favorite_id: Optional[int] = None
 
     @model_validator(mode="after")

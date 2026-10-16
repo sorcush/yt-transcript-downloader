@@ -13,8 +13,8 @@ const state = {
   sort: { col: null, dir: 'asc' },
   activeFavoriteId: null,
   favorites: [],
-  downloadTranscript: true,
-  downloadAudio: false,
+  downloadTranscript: false,
+  downloadAudio: true,
   lastDownloadPayload: null,  // remembered for Restart
 };
 
@@ -80,6 +80,9 @@ async function init() {
   });
   openFolderBtn.addEventListener('click', handleOpenFolder);
   copyPathBtn.addEventListener('click', handleCopyPath);
+  // Browsers may restore checkbox state on reload; make the boxes match state.
+  dlTranscript.checked = state.downloadTranscript;
+  dlAudio.checked = state.downloadAudio;
   dlTranscript.addEventListener('change', () => { state.downloadTranscript = dlTranscript.checked; updateSelectionUI(); });
   dlAudio.addEventListener('change', () => { state.downloadAudio = dlAudio.checked; updateSelectionUI(); });
   await loadFavorites();

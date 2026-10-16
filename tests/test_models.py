@@ -51,8 +51,8 @@ def test_download_request_defaults():
         video_ids=["v1"], video_urls={"v1": "u1"}, fields=["title"],
         output_folder="/out",
     )
-    assert req.download_transcript is True
-    assert req.download_audio is False
+    assert req.download_transcript is False
+    assert req.download_audio is True
     assert req.favorite_id is None
 
 

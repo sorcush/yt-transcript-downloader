@@ -339,3 +339,11 @@ def test_pause_only_affects_running_jobs():
 def test_pause_resume_unknown_job():
     assert client.post("/api/pause/nope").json()["status"] == "unknown"
     assert client.post("/api/resume/nope").json()["status"] == "unknown"
+
+
+@pytest.mark.parametrize("path", ["/", "/app.js"])
+def test_frontend_files_are_revalidated_on_every_load(path):
+    """Without Cache-Control, browsers may reuse stale page files after an update."""
+    resp = client.get(path)
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-cache"

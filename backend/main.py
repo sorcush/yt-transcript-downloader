@@ -321,5 +321,16 @@ async def _run_download(job_id: str, request: DownloadRequest) -> None:
     _jobs[job_id]["status"] = "cancelled" if _jobs[job_id]["cancelled"] else "done"
 
 
+class _RevalidatingStaticFiles(StaticFiles):
+    """StaticFiles that makes browsers re-check files on every load ("no-cache"
+    still allows caching, but via a cheap ETag 304), so an updated frontend is
+    never hidden behind a stale cached copy."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # Serve frontend — must come last so /api routes take priority
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+app.mount("/", _RevalidatingStaticFiles(directory="frontend", html=True), name="frontend")
